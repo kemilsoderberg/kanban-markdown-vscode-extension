@@ -1,7 +1,11 @@
 import * as path from 'path'
 import * as vscode from 'vscode'
-import { parseFeatureFile, serializeFeature, isDirectoryFeaturePath } from '../shared/featureFrontmatter'
 import { getTitleFromContent, generateFeatureSlug } from '../shared/types'
+import {
+  parseFeatureFile,
+  serializeFeature,
+  isDirectoryFeaturePath
+} from '../shared/featureFrontmatter'
 
 // Re-exported so the file layer remains the single seam for "which file is
 // which" decisions.
@@ -18,7 +22,10 @@ export interface ReadDirAdapter extends FsAdapter {
   readDirectory(uri: vscode.Uri): Thenable<[string, number][]>
 }
 
-export async function fileExists(filePath: string, fs: FsAdapter = vscode.workspace.fs): Promise<boolean> {
+export async function fileExists(
+  filePath: string,
+  fs: FsAdapter = vscode.workspace.fs
+): Promise<boolean> {
   try {
     await fs.stat(vscode.Uri.file(filePath))
     return true
@@ -38,7 +45,10 @@ const FILE_TYPE_DIRECTORY = 2
  * Resolves the features directory from the workspace root and the
  * `featuresDirectory` setting value. Central decision: where features live.
  */
-export function getFeaturesDirectory(workspaceRoot: string | null | undefined, configured: string | undefined): string | null {
+export function getFeaturesDirectory(
+  workspaceRoot: string | null | undefined,
+  configured: string | undefined
+): string | null {
   if (!workspaceRoot) return null
   return path.join(workspaceRoot, configured || DEFAULT_FEATURES_DIRECTORY)
 }
@@ -61,7 +71,10 @@ export function isFeatureFilePath(filePath: string, featuresDir: string): boolea
  * Creates the features directory.
  * Central decision: what directory structure must exist before use.
  */
-export async function ensureFeaturesDirectory(featuresDir: string, fs: FsAdapter = vscode.workspace.fs): Promise<void> {
+export async function ensureFeaturesDirectory(
+  featuresDir: string,
+  fs: FsAdapter = vscode.workspace.fs
+): Promise<void> {
   await fs.createDirectory(vscode.Uri.file(featuresDir))
 }
 
@@ -71,7 +84,10 @@ export async function ensureFeaturesDirectory(featuresDir: string, fs: FsAdapter
  * are read from. Directories without a spec.md are malformed and skipped,
  * just like unparseable files.
  */
-export async function listFeatureFiles(featuresDir: string, fs: ReadDirAdapter = vscode.workspace.fs as ReadDirAdapter): Promise<string[]> {
+export async function listFeatureFiles(
+  featuresDir: string,
+  fs: ReadDirAdapter = vscode.workspace.fs as ReadDirAdapter
+): Promise<string[]> {
   const files: string[] = []
   try {
     const entries = await fs.readDirectory(vscode.Uri.file(featuresDir))
@@ -96,7 +112,10 @@ export async function listFeatureFiles(featuresDir: string, fs: ReadDirAdapter =
  * directory (never inside a feature directory or the done/ subfolder).
  * Central decision: what counts as a legacy layout remnant in the loader.
  */
-export async function listLegacyFlatFeatureFiles(featuresDir: string, fs: ReadDirAdapter = vscode.workspace.fs as ReadDirAdapter): Promise<string[]> {
+export async function listLegacyFlatFeatureFiles(
+  featuresDir: string,
+  fs: ReadDirAdapter = vscode.workspace.fs as ReadDirAdapter
+): Promise<string[]> {
   const files: string[] = []
   try {
     const entries = await fs.readDirectory(vscode.Uri.file(featuresDir))
@@ -130,10 +149,17 @@ export function toWorkspaceRelativePath(filePath: string, workspaceRoot: string 
  * collision so feature directories never clash.
  * Central decision: what a new feature directory is called.
  */
-export async function getUniqueFeatureDirectory(featuresDir: string, slug: string, fs: FsAdapter = vscode.workspace.fs): Promise<string> {
+export async function getUniqueFeatureDirectory(
+  featuresDir: string,
+  slug: string,
+  fs: FsAdapter = vscode.workspace.fs
+): Promise<string> {
   let name = slug
   let counter = 2
-  while (await fileExists(path.join(featuresDir, name), fs) || await fileExists(path.join(featuresDir, `${name}.md`), fs)) {
+  while (
+    await fileExists(path.join(featuresDir, name), fs) ||
+    await fileExists(path.join(featuresDir, `${name}.md`), fs)
+  ) {
     name = `${slug}-${counter}`
     counter++
   }
@@ -144,7 +170,10 @@ export async function getUniqueFeatureDirectory(featuresDir: string, slug: strin
  * Creates a feature directory and its `issues/` subdirectory.
  * Central decision: what structure a new feature directory contains.
  */
-export async function ensureFeatureDirectory(featureDir: string, fs: FsAdapter = vscode.workspace.fs): Promise<void> {
+export async function ensureFeatureDirectory(
+  featureDir: string,
+  fs: FsAdapter = vscode.workspace.fs
+): Promise<void> {
   await fs.createDirectory(vscode.Uri.file(featureDir))
   await fs.createDirectory(vscode.Uri.file(path.join(featureDir, 'issues')))
 }
@@ -156,7 +185,12 @@ export async function ensureFeatureDirectory(featureDir: string, fs: FsAdapter =
  * returned unchanged.
  * Central decision: what happens to the feature when it leaves the board.
  */
-export async function moveFeatureToDirectory(currentPath: string, featuresDir: string, directory: string, fs: FsAdapter = vscode.workspace.fs): Promise<string> {
+export async function moveFeatureToDirectory(
+  currentPath: string,
+  featuresDir: string,
+  directory: string,
+  fs: FsAdapter = vscode.workspace.fs
+): Promise<string> {
   // The path identifies a spec.md inside its feature directory: move the
   // whole directory, never the file alone.
   const featureDir = path.dirname(currentPath)
@@ -194,7 +228,10 @@ export function getIssueFilePath(featureDir: string, issueId: string): string {
  * Membership is by location only. Returns an empty list when the
  * issues/ directory does not exist.
  */
-export async function listIssueFiles(featureDir: string, fs: ReadDirAdapter = vscode.workspace.fs as ReadDirAdapter): Promise<string[]> {
+export async function listIssueFiles(
+  featureDir: string,
+  fs: ReadDirAdapter = vscode.workspace.fs as ReadDirAdapter
+): Promise<string[]> {
   const issuesDir = path.join(featureDir, 'issues')
   try {
     const entries = await fs.readDirectory(vscode.Uri.file(issuesDir))
@@ -213,7 +250,10 @@ export async function listIssueFiles(featureDir: string, fs: ReadDirAdapter = vs
  * Hand-created files with any numeric prefix count, so numbering never
  * collides. Central decision: what number a new issue gets.
  */
-export async function getNextIssueNumber(featureDir: string, fs: ReadDirAdapter = vscode.workspace.fs as ReadDirAdapter): Promise<number> {
+export async function getNextIssueNumber(
+  featureDir: string,
+  fs: ReadDirAdapter = vscode.workspace.fs as ReadDirAdapter
+): Promise<number> {
   const issuesDir = path.join(featureDir, 'issues')
   let max = 0
   try {
@@ -253,7 +293,10 @@ export interface LegacyMigrationResult {
  * migration: flat `.md` files at the features root and `.md` files inside
  * the `done/` subfolder. Directory features (spec.md) are not legacy.
  */
-export async function detectLegacyFeatureFiles(featuresDir: string, fs: Pick<MigrationFs, 'readDirectory'> = vscode.workspace.fs as MigrationFs): Promise<string[]> {
+export async function detectLegacyFeatureFiles(
+  featuresDir: string,
+  fs: Pick<MigrationFs, 'readDirectory'> = vscode.workspace.fs as MigrationFs
+): Promise<string[]> {
   const legacy: string[] = []
   try {
     const entries = await fs.readDirectory(vscode.Uri.file(featuresDir))
@@ -290,7 +333,11 @@ export async function detectLegacyFeatureFiles(featuresDir: string, fs: Pick<Mig
  * their frontmatter. Unparseable files are skipped. The `done/` folder and
  * any other empty legacy status subfolder are removed afterwards when empty.
  */
-export async function migrateLegacyFeatureFiles(featuresDir: string, fs: MigrationFs = vscode.workspace.fs as MigrationFs, confirm?: (count: number) => Thenable<boolean>): Promise<LegacyMigrationResult> {
+export async function migrateLegacyFeatureFiles(
+  featuresDir: string,
+  fs: MigrationFs = vscode.workspace.fs as MigrationFs,
+  confirm?: (count: number) => Thenable<boolean>
+): Promise<LegacyMigrationResult> {
   const legacyFiles = await detectLegacyFeatureFiles(featuresDir, fs)
 
   if (legacyFiles.length === 0) {
@@ -337,7 +384,8 @@ export async function migrateLegacyFeatureFiles(featuresDir: string, fs: Migrati
         specContent = serializeFeature(feature)
       }
 
-      await fs.writeFile(vscode.Uri.file(path.join(featureDir, 'spec.md')), new TextEncoder().encode(specContent))
+      const encoded = new TextEncoder().encode(specContent)
+      await fs.writeFile(vscode.Uri.file(path.join(featureDir, 'spec.md')), encoded)
       migrated++
     } catch {
       skipped++
@@ -396,7 +444,11 @@ export interface MaybeMigrationResult extends LegacyMigrationResult {
  * legacy layout that appears later is offered again. When the offer is
  * skipped the result reports `skippedOffer: true`.
  */
-export async function maybeRunLegacyMigration(featuresDir: string, fs: MigrationFs = vscode.workspace.fs as MigrationFs, confirm?: (count: number) => Thenable<boolean>): Promise<MaybeMigrationResult> {
+export async function maybeRunLegacyMigration(
+  featuresDir: string,
+  fs: MigrationFs = vscode.workspace.fs as MigrationFs,
+  confirm?: (count: number) => Thenable<boolean>
+): Promise<MaybeMigrationResult> {
   const legacyFiles = await detectLegacyFeatureFiles(featuresDir, fs)
 
   if (legacyFiles.length === 0) {
@@ -429,7 +481,12 @@ export async function maybeRunLegacyMigration(featuresDir: string, fs: Migration
  * read-only — the in-memory board shows them, but disk stays untouched
  * until the user accepts the migration.
  */
-export async function loadFeatureDirectory(featuresDir: string, fs: MigrationFs = vscode.workspace.fs as MigrationFs, readFeature: (content: string, filePath: string) => unknown | null = (content, filePath) => parseFeatureFile(content, filePath)): Promise<unknown[]> {
+export async function loadFeatureDirectory(
+  featuresDir: string,
+  fs: MigrationFs = vscode.workspace.fs as MigrationFs,
+  readFeature: (content: string, filePath: string) => unknown | null = (content, filePath) =>
+    parseFeatureFile(content, filePath)
+): Promise<unknown[]> {
   const features: unknown[] = []
 
   for (const filePath of await listFeatureFiles(featuresDir, fs)) {
