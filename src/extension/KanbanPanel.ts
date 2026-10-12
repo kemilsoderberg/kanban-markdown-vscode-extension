@@ -2,9 +2,9 @@ import * as vscode from 'vscode'
 import * as crypto from 'crypto'
 import * as path from 'path'
 import { generateKeyBetween, generateNKeysBetween } from 'fractional-indexing'
-import { getTitleFromContent, generateFeatureFilename, generateFeatureSlug } from '../shared/types'
-import type { Feature, FeatureStatus, Issue, IssueFrontmatter, Priority, KanbanColumn, FeatureFrontmatter, CardDisplaySettings, FilenamePattern, AIAgent, AIPermissionMode, BoardViewMode } from '../shared/types'
-import { moveFeatureFile, getFeatureFilePath, getStatusFromPath, fileExists, getFeaturesDirectory, ensureFeaturesDirectory, listFeatureFiles, moveFeatureToDirectory, listStatusSubfolderFiles, removeStatusSubfolderIfEmpty, toWorkspaceRelativePath, getUniqueFeatureDirectory, ensureFeatureDirectory, migrateLegacyFeatureFiles, getIssueFilePath, listIssueFiles, getNextIssueNumber } from './featureFileUtils'
+import { getTitleFromContent, generateFeatureSlug } from '../shared/types'
+import type { Feature, FeatureStatus, Issue, IssueFrontmatter, Priority, KanbanColumn, FeatureFrontmatter, CardDisplaySettings, AIAgent, AIPermissionMode, BoardViewMode } from '../shared/types'
+import { getFeaturesDirectory, ensureFeaturesDirectory, listFeatureFiles, moveFeatureToDirectory, toWorkspaceRelativePath, getUniqueFeatureDirectory, ensureFeatureDirectory, migrateLegacyFeatureFiles, getIssueFilePath, listIssueFiles, getNextIssueNumber } from './featureFileUtils'
 import { parseFeatureFile, serializeFeature, parseIssueFile, serializeIssue } from '../shared/featureFrontmatter'
 import { featureMatchesEpicLane } from '../shared/epicLane'
 import { t, getBundle, getEffectiveLocale, reloadBundle, getAllDefaultColumnNames, getDefaultColumnNamesForLocale } from './l10n'
@@ -238,9 +238,6 @@ export class KanbanPanel {
           this._loadFeatures().then(() => this._sendFeaturesToWebview())
         } else {
           this._sendFeaturesToWebview()
-          if (e.affectsConfiguration('kanban-markdown.filenamePattern')) {
-            this._promptFilenamePatternMigration()
-          }
           if (e.affectsConfiguration('kanban-markdown.language')) {
             this._promptColumnLanguageMigration()
           }
@@ -406,12 +403,11 @@ export class KanbanPanel {
     try {
       await ensureFeaturesDirectory(featuresDir)
 
-      // Phase 0: One-time migration from the flat layout to feature
-      // directories. Detects flat .md files (and done/ contents), shows one
-      // confirmation dialog with the feature count, then converts each file
-      // into <slug>/spec.md. Guarded by the migrating flag so the watcher
-      // does not fight the migration. Runs inside the same upgrade pass as
-      // the legacy status-subfolder migration below.
+      // One-time migration from the flat layout to feature directories.
+      // Detects flat .md files (and done/ contents), shows one confirmation
+      // dialog with the feature count, then converts each file into
+      // <slug>/spec.md. Guarded by the migrating flag so the watcher does
+      // not fight the migration.
       this._migrating = true
       try {
         const migrationResult = await migrateLegacyFeatureFiles(
@@ -431,7 +427,6 @@ export class KanbanPanel {
           }
         )
         if (migrationResult.cancelled) {
-          this._migrating = false
           const features = await this._loadFeatureFiles(featuresDir)
           this._features = this._sortFeatures(features)
           return
@@ -440,82 +435,7 @@ export class KanbanPanel {
         this._migrating = false
       }
 
-      // Phase 1: Migrate files from old per-status subfolders into new layout
-      // Non-done subfolders (backlog/, todo/, in-progress/, review/) → move files to root
-      // done/ files stay in done/
-      // Root files with status: done → move to done/
-      this._migrating = true
-      try {
-        const oldStatusFolders = ['backlog', 'todo', 'in-progress', 'review']
-        for (const folder of oldStatusFolders) {
-          const legacyFiles = await listStatusSubfolderFiles(featuresDir, folder)
-          for (const filePath of legacyFiles) {
-            try {
-              const content = new TextDecoder().decode(await vscode.workspace.fs.readFile(vscode.Uri.file(filePath)))
-              const feature = this._parseFeatureFile(content, filePath)
-              const status = feature?.status || 'backlog'
-              // Move to done/ if status is done, otherwise move to root
-              await moveFeatureFile(filePath, featuresDir, status)
-            } catch {
-              // Skip files that fail to migrate
-            }
-          }
-        }
-
-        // Remove old status folders if they are now empty
-        for (const folder of oldStatusFolders) {
-          await removeStatusSubfolderIfEmpty(featuresDir, folder)
-        }
-
-        // Also check root files that have status: done → move to done/
-        const rootFiles = await listFeatureFiles(featuresDir)
-        for (const filePath of rootFiles) {
-          try {
-            const content = new TextDecoder().decode(await vscode.workspace.fs.readFile(vscode.Uri.file(filePath)))
-            const feature = this._parseFeatureFile(content, filePath)
-            if (feature?.status === 'done') {
-              await moveFeatureFile(filePath, featuresDir, 'done')
-            }
-          } catch {
-            // Skip files that fail to migrate
-          }
-        }
-      } finally {
-        this._migrating = false
-      }
-
-      // Phase 2: Load .md files from root (non-done) + done/ subfolder
       const features = await this._loadFeatureFiles(featuresDir)
-
-      // Phase 3: Reconcile done ↔ non-done mismatches
-      // Root file with status: done → move to done/
-      // done/ file with non-done status → move to root
-      this._migrating = true
-      try {
-        for (const feature of features) {
-          const pathStatus = getStatusFromPath(feature.filePath, featuresDir)
-          const inDoneFolder = pathStatus === 'done'
-          const isDoneStatus = feature.status === 'done'
-
-          if (isDoneStatus && !inDoneFolder) {
-            try {
-              const newPath = await moveFeatureFile(feature.filePath, featuresDir, 'done')
-              feature.filePath = newPath
-            } catch {
-              // Will retry on next load
-            }
-          } else if (!isDoneStatus && inDoneFolder) {
-            try {
-              const newPath = await moveFeatureFile(feature.filePath, featuresDir, feature.status)
-              feature.filePath = newPath
-            } catch {
-              // Will retry on next load
-            }
-          }
-        }
-      } finally {
-        this._migrating = false
-      }
 
       // Migrate legacy integer order values to fractional indices
       const hasLegacyOrder = features.some(f => /^\d+$/.test(f.order))
@@ -622,9 +542,6 @@ export class KanbanPanel {
     const feature = this._features.find(f => f.id === featureId)
     if (!feature) return
 
-    const featuresDir = this._getWorkspaceFeaturesDir()
-    if (!featuresDir) return
-
     const oldStatus = feature.status
     const statusChanged = oldStatus !== newStatus
 
@@ -650,20 +567,6 @@ export class KanbanPanel {
     const content = this._serializeFeature(feature)
     await vscode.workspace.fs.writeFile(vscode.Uri.file(feature.filePath), new TextEncoder().encode(content))
 
-    // Only move file when crossing the done boundary
-    const crossingDoneBoundary = statusChanged && (oldStatus === 'done' || newStatus === 'done')
-    if (crossingDoneBoundary) {
-      this._migrating = true
-      try {
-        const newPath = await moveFeatureFile(feature.filePath, featuresDir, newStatus)
-        feature.filePath = newPath
-      } catch {
-        // Move failed; file stays in old folder, will reconcile on next load
-      } finally {
-        this._migrating = false
-      }
-    }
-
     this._sendFeaturesToWebview()
   }
 
@@ -672,9 +575,6 @@ export class KanbanPanel {
     targetColumnId: string,
     epicLane?: string | null
   ): Promise<void> {
-    const featuresDir = this._getWorkspaceFeaturesDir()
-    if (!featuresDir) return
-
     const sourceFeatures = this._features
       .filter(f => f.status === sourceColumnId && featureMatchesEpicLane(f, epicLane))
       .sort((a, b) => (a.order < b.order ? -1 : a.order > b.order ? 1 : 0))
@@ -687,11 +587,9 @@ export class KanbanPanel {
     const lastTargetOrder = targetFeatures.length > 0 ? targetFeatures[targetFeatures.length - 1].order : null
     const newKeys = generateNKeysBetween(lastTargetOrder, null, sourceFeatures.length)
 
-    const oldStatus = sourceColumnId
     const newStatus = targetColumnId as FeatureStatus
-    const crossingDoneBoundary = oldStatus === 'done' || newStatus === 'done' as string
 
-    this._migrating = crossingDoneBoundary
+    this._migrating = true
     try {
       for (let i = 0; i < sourceFeatures.length; i++) {
         const feature = sourceFeatures[i]
@@ -702,15 +600,6 @@ export class KanbanPanel {
 
         const content = this._serializeFeature(feature)
         await vscode.workspace.fs.writeFile(vscode.Uri.file(feature.filePath), new TextEncoder().encode(content))
-
-        if (crossingDoneBoundary) {
-          try {
-            const newPath = await moveFeatureFile(feature.filePath, featuresDir, targetColumnId)
-            feature.filePath = newPath
-          } catch {
-            // Will reconcile on next load
-          }
-        }
       }
     } finally {
       this._migrating = false
@@ -772,12 +661,9 @@ export class KanbanPanel {
     if (!feature) return
 
     try {
-      if (path.basename(feature.filePath) === 'spec.md') {
-        // Directory feature: delete the whole feature directory tree.
-        await vscode.workspace.fs.delete(vscode.Uri.file(path.dirname(feature.filePath)), { recursive: true })
-      } else {
-        await vscode.workspace.fs.delete(vscode.Uri.file(feature.filePath))
-      }
+      // Feature files are always <slug>/spec.md: delete the whole feature
+      // directory tree.
+      await vscode.workspace.fs.delete(vscode.Uri.file(path.dirname(feature.filePath)), { recursive: true })
       this._features = this._features.filter(f => f.id !== featureId)
       this._sendFeaturesToWebview()
     } catch (err) {
@@ -788,9 +674,6 @@ export class KanbanPanel {
   private async _updateFeature(featureId: string, updates: Partial<Feature>): Promise<void> {
     const feature = this._features.find(f => f.id === featureId)
     if (!feature) return
-
-    const featuresDir = this._getWorkspaceFeaturesDir()
-    if (!featuresDir) return
 
     const oldStatus = feature.status
 
@@ -804,20 +687,6 @@ export class KanbanPanel {
     // Persist to file
     const content = this._serializeFeature(feature)
     await vscode.workspace.fs.writeFile(vscode.Uri.file(feature.filePath), new TextEncoder().encode(content))
-
-    // Only move file when crossing the done boundary
-    const crossingDoneBoundary = oldStatus !== feature.status && (oldStatus === 'done' || feature.status === 'done')
-    if (crossingDoneBoundary) {
-      this._migrating = true
-      try {
-        const newPath = await moveFeatureFile(feature.filePath, featuresDir, feature.status)
-        feature.filePath = newPath
-      } catch {
-        // Move failed; file stays in old folder, will reconcile on next load
-      } finally {
-        this._migrating = false
-      }
-    }
 
     this._sendFeaturesToWebview()
   }
@@ -870,9 +739,6 @@ export class KanbanPanel {
     const feature = this._features.find(f => f.id === featureId)
     if (!feature) return
 
-    const featuresDir = this._getWorkspaceFeaturesDir()
-    if (!featuresDir) return
-
     const oldStatus = feature.status
 
     // Update feature in memory
@@ -892,20 +758,6 @@ export class KanbanPanel {
     const fileContent = this._serializeFeature(feature)
     this._lastWrittenContent = fileContent
     await vscode.workspace.fs.writeFile(vscode.Uri.file(feature.filePath), new TextEncoder().encode(fileContent))
-
-    // Only move file when crossing the done boundary
-    const crossingDoneBoundary = oldStatus !== feature.status && (oldStatus === 'done' || feature.status === 'done')
-    if (crossingDoneBoundary) {
-      this._migrating = true
-      try {
-        const newPath = await moveFeatureFile(feature.filePath, featuresDir, feature.status)
-        feature.filePath = newPath
-      } catch {
-        // Move failed; file stays in old folder, will reconcile on next load
-      } finally {
-        this._migrating = false
-      }
-    }
 
     // Update all features in webview
     this._sendFeaturesToWebview()
@@ -1160,24 +1012,6 @@ export class KanbanPanel {
     }
   }
 
-  private async _promptFilenamePatternMigration(): Promise<void> {
-    const count = this._features.length
-    if (count === 0) return
-
-    const filenameMsg = count === 1
-      ? t('panel.filenameChangedOne')
-      : t('panel.filenameChangedOther', { count })
-    const renameButton = t('panel.renameButton')
-    const answer = await vscode.window.showInformationMessage(
-      filenameMsg,
-      renameButton,
-      t('panel.keepExisting')
-    )
-    if (answer !== renameButton) return
-
-    await this._migrateFilenames()
-  }
-
   private async _promptColumnLanguageMigration(): Promise<void> {
     const config = vscode.workspace.getConfiguration('kanban-markdown')
     const columns = config.get<KanbanColumn[]>('columns')
@@ -1207,59 +1041,6 @@ export class KanbanPanel {
       name: newNames[col.id] ?? col.name
     }))
     await config.update('columns', updatedColumns, vscode.ConfigurationTarget.Workspace)
-  }
-
-  private async _migrateFilenames(): Promise<void> {
-    const featuresDir = this._getWorkspaceFeaturesDir()
-    if (!featuresDir) return
-
-    const config = vscode.workspace.getConfiguration('kanban-markdown')
-    const pattern = config.get<FilenamePattern>('filenamePattern', 'name-date')
-
-    let renamed = 0
-    let skipped = 0
-
-    this._migrating = true
-    try {
-      for (const feature of this._features) {
-        // Directory features are immutable: the directory name never changes.
-        if (path.basename(feature.filePath) === 'spec.md') continue
-
-        const title = getTitleFromContent(feature.content)
-        const createdDate = new Date(feature.created)
-        const newFilename = generateFeatureFilename(title, pattern, createdDate)
-
-        if (newFilename === feature.id) continue // no change needed
-
-        const newFilePath = getFeatureFilePath(featuresDir, feature.status, newFilename)
-
-        // Skip if target file already exists (collision)
-        if (await fileExists(newFilePath)) {
-          skipped++
-          continue
-        }
-
-        const oldPath = feature.filePath
-        feature.id = newFilename
-        feature.filePath = newFilePath
-
-        const serialized = this._serializeFeature(feature)
-        await vscode.workspace.fs.createDirectory(vscode.Uri.file(path.dirname(newFilePath)))
-        await vscode.workspace.fs.writeFile(vscode.Uri.file(newFilePath), new TextEncoder().encode(serialized))
-        await vscode.workspace.fs.delete(vscode.Uri.file(oldPath))
-        renamed++
-      }
-    } finally {
-      this._migrating = false
-    }
-
-    await this._loadFeatures()
-    this._sendFeaturesToWebview()
-
-    const msg = skipped > 0
-      ? t('panel.renameResultWithSkipped', { renamed, skipped })
-      : t('panel.renameResult', { renamed })
-    vscode.window.showInformationMessage(`Kanban Markdown: ${msg}`)
   }
 
   private _sendFeaturesToWebview(): void {
