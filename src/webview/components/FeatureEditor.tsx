@@ -34,6 +34,7 @@ import { useStore } from '../store'
 import { vscode } from '../vscodeApi'
 import { AssigneeInput } from './AssigneeInput'
 import { EpicInput } from './EpicInput'
+import { MiniIssueBoard } from './MiniIssueBoard'
 
 interface MarkdownStorage {
   markdown: { getMarkdown: () => string }
@@ -561,7 +562,6 @@ export function FeatureEditor({
   const features = useStore((s) => s.features)
   const [currentFrontmatter, setCurrentFrontmatter] = useState(frontmatter)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
-  const [newIssueTitle, setNewIssueTitle] = useState('')
   const priorityLabels = getPriorityLabels()
   const statusLabels = getStatusLabels()
   const issueStatusLabels = getIssueStatusLabels()
@@ -693,21 +693,6 @@ export function FeatureEditor({
       frontmatter: currentIssueFrontmatter
     })
   }, [editor, currentIssueFrontmatter, featureId])
-
-  const handleAddIssue = (): void => {
-    const trimmed = newIssueTitle.trim()
-    if (!trimmed) return
-    vscode.postMessage({ type: 'addIssue', featureId, title: trimmed })
-    setNewIssueTitle('')
-  }
-
-  const handleOpenIssue = (issue: Issue): void => {
-    vscode.postMessage({ type: 'openIssue', featureId, issueId: issue.id })
-  }
-
-  const handleDeleteIssue = (issue: Issue): void => {
-    vscode.postMessage({ type: 'deleteIssue', featureId, issueId: issue.id })
-  }
 
   const handleFrontmatterUpdate = useCallback(
     (updates: Partial<FeatureFrontmatter>) => {
@@ -931,7 +916,7 @@ export function FeatureEditor({
         )}
       </div>
 
-      {/* Issues list (feature mode only) */}
+      {/* Issues mini-board (feature mode only) */}
       {!isIssueMode && (
         <div
           className="px-4 py-2"
@@ -951,53 +936,7 @@ export function FeatureEditor({
               {issues.filter((i) => i.status === 'done').length}/{issues.length}
             </span>
           </div>
-          {issues.length > 0 && (
-            <div className="space-y-0.5 mb-1.5">
-              {issues.map((issue) => (
-                <div
-                  key={issue.id}
-                  className="flex items-center gap-1.5 group/issue"
-                >
-                  <button
-                    onClick={() => handleOpenIssue(issue)}
-                    className="flex items-center gap-1.5 flex-1 min-w-0 text-left text-xs rounded px-1 py-0.5 vscode-hover-bg transition-colors cursor-pointer"
-                    style={{ color: 'var(--vscode-foreground)' }}
-                  >
-                    <span
-                      className="w-1.5 h-1.5 rounded-full shrink-0"
-                      style={{
-                        backgroundColor:
-                          issue.status === 'done' ? '#22c55e' : issue.status === 'doing' ? '#f59e0b' : '#6b7280'
-                      }}
-                    />
-                    <span className={cn('truncate', issue.status === 'done' && 'line-through opacity-60')}>
-                      {issue.title}
-                    </span>
-                  </button>
-                  <button
-                    onClick={() => handleDeleteIssue(issue)}
-                    title={t('editor.deleteIssue')}
-                    aria-label={t('editor.deleteIssue')}
-                    className="opacity-0 group-hover/issue:opacity-100 p-0.5 rounded vscode-hover-bg transition-opacity cursor-pointer"
-                    style={{ color: 'var(--vscode-descriptionForeground)' }}
-                  >
-                    <Trash2 size={12} />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-          <input
-            type="text"
-            value={newIssueTitle}
-            placeholder={t('editor.addIssue')}
-            onChange={(e) => setNewIssueTitle(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') handleAddIssue()
-            }}
-            className="w-full text-xs bg-transparent border-none outline-none py-0.5"
-            style={{ color: 'var(--vscode-foreground)' }}
-          />
+          <MiniIssueBoard featureId={featureId} />
         </div>
       )}
 

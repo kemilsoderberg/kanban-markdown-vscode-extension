@@ -124,6 +124,38 @@ describe('updateIssue', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Mini-board move transitions
+// ---------------------------------------------------------------------------
+
+describe('moveIssue', () => {
+  it('moves an issue to the new status within the feature', () => {
+    useStore.getState().setFeatures([
+      makeFeature({ id: 'f1', issues: [makeIssue({ id: '001-a', status: 'todo' })] })
+    ])
+    useStore.getState().moveIssue('f1', '001-a', 'doing')
+    const issue = useStore.getState().features.find(f => f.id === 'f1')!.issues![0]
+    expect(issue.status).toBe('doing')
+  })
+
+  it('leaves other issues and features untouched', () => {
+    useStore.getState().setFeatures([
+      makeFeature({ id: 'f1', issues: [makeIssue({ id: '001-a' }), makeIssue({ id: '002-b' })] }),
+      makeFeature({ id: 'f2', issues: [makeIssue({ id: '003-c' })] })
+    ])
+    useStore.getState().moveIssue('f1', '001-a', 'done')
+    const f1 = useStore.getState().features.find(f => f.id === 'f1')!
+    expect(f1.issues!.find(i => i.id === '002-b')!.status).toBe('todo')
+    expect(useStore.getState().features.find(f => f.id === 'f2')!.issues![0].status).toBe('todo')
+  })
+
+  it('does nothing when the issue does not exist', () => {
+    useStore.getState().setFeatures([makeFeature({ id: 'f1', issues: [makeIssue()] })])
+    useStore.getState().moveIssue('f1', 'missing', 'done')
+    expect(useStore.getState().features.find(f => f.id === 'f1')!.issues![0].status).toBe('todo')
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Issue selectors
 // ---------------------------------------------------------------------------
 

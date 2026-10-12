@@ -46,6 +46,7 @@ interface KanbanState {
   addIssue: (featureId: string, issue: Issue) => void
   updateIssue: (featureId: string, issueId: string, updates: Partial<Issue>) => void
   removeIssue: (featureId: string, issueId: string) => void
+  moveIssue: (featureId: string, issueId: string, newStatus: IssueStatus) => void
   getIssuesByStatus: (featureId: string, status: IssueStatus) => Issue[]
   getFeaturesByStatus: (status: FeatureStatus, epicLane?: string | null) => Feature[]
   getFilteredFeaturesByStatus: (status: FeatureStatus, epicLane?: string | null) => Feature[]
@@ -199,6 +200,20 @@ export const useStore = create<KanbanState>((set, get) => ({
       features: state.features.map((f) =>
         f.id === featureId
           ? { ...f, issues: f.issues?.filter((i) => i.id !== issueId) }
+          : f
+      )
+    })),
+
+  moveIssue: (featureId, issueId, newStatus) =>
+    set((state) => ({
+      features: state.features.map((f) =>
+        f.id === featureId
+          ? {
+              ...f,
+              issues: f.issues?.map((i) =>
+                i.id === issueId ? { ...i, status: newStatus } : i
+              )
+            }
           : f
       )
     })),
