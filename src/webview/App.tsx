@@ -357,7 +357,15 @@ function App(): React.JSX.Element {
     vscode.postMessage({ type: 'closeIssue' })
   }
 
-  const handleStartWithAI = (agent: AIAgent, permissionMode: AIPermissionMode): void => {
+  const handleStartWithAI = (issueId: string | null, agent: AIAgent, permissionMode: AIPermissionMode): void => {
+    if (issueId !== null && editingIssue) {
+      vscode.postMessage({ type: 'startIssueWithAI', featureId: editingIssue.featureId, issueId, agent, permissionMode })
+      return
+    }
+    if (issueId !== null && editingFeature) {
+      vscode.postMessage({ type: 'startIssueWithAI', featureId: editingFeature.id, issueId, agent, permissionMode })
+      return
+    }
     vscode.postMessage({ type: 'startWithAI', agent, permissionMode })
   }
 

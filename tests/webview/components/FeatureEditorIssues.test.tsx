@@ -155,12 +155,55 @@ describe('FeatureEditor — issue list', () => {
     fireEvent.click(screen.getByText('Write tests'))
     // The delete affordance sits in the same row as the issue title
     const row = screen.getByText('Write tests').closest('div')!
-    fireEvent.click(row.querySelector('button[title]')!)
+    fireEvent.click(row.querySelector('button[title="Delete issue"]')!)
     expect(mockPostMessage).toHaveBeenCalledWith({
       type: 'deleteIssue',
       featureId: 'my-feature',
       issueId: '002-b'
     })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Build with AI on issues
+// ---------------------------------------------------------------------------
+
+describe('FeatureEditor — issue Build with AI', () => {
+  it('has a Build with AI affordance per issue row; clicking posts startIssueWithAI', () => {
+    const onStartWithAI = vi.fn()
+    const feature = makeFeature({
+      issues: [makeIssue(), makeIssue({ id: '002-b', title: 'Write tests', status: 'doing' })]
+    })
+    useStore.setState({ features: [feature], cardSettings: defaultSettings })
+    render(
+      <FeatureEditor
+        featureId={feature.id}
+        content={'# My Feature\n\nBody.'}
+        frontmatter={{
+          id: feature.id,
+          status: feature.status,
+          priority: feature.priority,
+          assignee: feature.assignee,
+          epic: feature.epic,
+          dueDate: feature.dueDate,
+          created: feature.created,
+          modified: feature.modified,
+          completedAt: feature.completedAt,
+          labels: feature.labels,
+          order: feature.order
+        }}
+        issueFrontmatter={null}
+        onSave={() => {}}
+        onClose={() => {}}
+        onDelete={() => {}}
+        onOpenFile={() => {}}
+        onStartWithAI={onStartWithAI}
+      />
+    )
+    const buttons = screen.getAllByRole('button', { name: /build this issue with ai/i })
+    expect(buttons.length).toBe(2)
+    fireEvent.click(buttons[0])
+    expect(onStartWithAI).toHaveBeenCalledWith('001-setup-db', 'claude', 'default')
   })
 })
 
