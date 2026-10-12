@@ -9,65 +9,6 @@ export interface FsAdapter {
   createDirectory(uri: vscode.Uri): Thenable<void>
 }
 
-export function getFeatureFilePath(featuresDir: string, status: string, filename: string): string {
-  if (status === 'done') {
-    return path.join(featuresDir, 'done', `${filename}.md`)
-  }
-  return path.join(featuresDir, `${filename}.md`)
-}
-
-export async function ensureStatusSubfolders(featuresDir: string, fs: FsAdapter = vscode.workspace.fs): Promise<void> {
-  await fs.createDirectory(vscode.Uri.file(path.join(featuresDir, 'done')))
-}
-
-export async function moveFeatureFile(
-  currentPath: string,
-  featuresDir: string,
-  newStatus: string,
-  fs: FsAdapter = vscode.workspace.fs
-): Promise<string> {
-  const filename = path.basename(currentPath)
-  const targetDir = newStatus === 'done'
-    ? path.join(featuresDir, 'done')
-    : featuresDir
-  let targetPath = path.join(targetDir, filename)
-
-  if (currentPath === targetPath) return currentPath
-
-  // Directory features never move on status change: the status lives in
-  // spec.md frontmatter only. A spec.md in a feature directory (or in a
-  // feature directory inside done/) is a directory feature.
-  if (filename === 'spec.md') {
-    const featureDir = path.dirname(currentPath)
-    const parent = path.dirname(featureDir)
-    if (parent === featuresDir || parent === path.join(featuresDir, 'done')) {
-      return currentPath
-    }
-  }
-
-  const ext = path.extname(filename)
-  const base = path.basename(filename, ext)
-  let counter = 1
-  while (await fileExists(targetPath, fs)) {
-    targetPath = path.join(targetDir, `${base}-${counter}${ext}`)
-    counter++
-  }
-
-  await fs.createDirectory(vscode.Uri.file(targetDir))
-  await fs.rename(vscode.Uri.file(currentPath), vscode.Uri.file(targetPath))
-
-  return targetPath
-}
-
-export function getStatusFromPath(filePath: string, featuresDir: string): string | null {
-  const relative = path.relative(featuresDir, filePath)
-  const parts = relative.split(path.sep)
-  if (parts.length === 2 && parts[0] === 'done') {
-    return 'done'
-  }
-  return null
-}
-
 export async function fileExists(filePath: string, fs: FsAdapter = vscode.workspace.fs): Promise<boolean> {
   try {
     await fs.stat(vscode.Uri.file(filePath))
@@ -96,7 +37,7 @@ export function getFeaturesDirectory(workspaceRoot: string | null | undefined, c
 /**
  * Decides whether a file path is a trackable feature file inside the
  * features directory. Central decision: what counts as a feature file.
- * A feature file is a flat `<slug>.md` or a `<slug>/spec.md`; issue files
+ * A feature file is exactly `<slug>/spec.md`; issue files, flat files
  * and other files inside feature directories are not feature files.
  */
 export function isFeatureFilePath(filePath: string, featuresDir: string): boolean {
@@ -104,25 +45,22 @@ export function isFeatureFilePath(filePath: string, featuresDir: string): boolea
   const relative = path.relative(featuresDir, filePath)
   if (relative === '' || relative.startsWith('..') || path.isAbsolute(relative)) return false
   const parts = relative.split(path.sep)
-  if (parts.length === 1) return true
-  if (parts.length === 2 && parts[0] === 'done') return true
-  if (parts.length === 2 && parts[1] === 'spec.md') return true
-  if (parts.length === 3 && parts[0] === 'done' && parts[2] === 'spec.md') return true
-  return false
+  return parts.length === 2 && parts[1] === 'spec.md'
 }
 
 /**
- * Creates the features directory and its `done/` subfolder.
+ * Creates the features directory.
  * Central decision: what directory structure must exist before use.
  */
 export async function ensureFeaturesDirectory(featuresDir: string, fs: FsAdapter = vscode.workspace.fs): Promise<void> {
   await fs.createDirectory(vscode.Uri.file(featuresDir))
-  await fs.createDirectory(vscode.Uri.file(path.join(featuresDir, 'done')))
 }
 
 /**
- * Reads the layout: lists every existing feature file path (root + `done/`
- * subfolder). Central decision: where features are read from.
+ * Reads the layout: lists every existing feature file path, one
+ * `<slug>/spec.md` per feature directory. Central decision: where features
+ * are read from. Directories without a spec.md are malformed and skipped,
+ * just like unparseable files.
  * Requires a `readDirectory` capability in addition to the base FsAdapter.
  */
 export async function listFeatureFiles(
@@ -133,56 +71,19 @@ export async function listFeatureFiles(
   try {
     const entries = await fs.readDirectory(vscode.Uri.file(featuresDir))
     for (const [name, type] of entries) {
-      if (type === FILE_TYPE_FILE && name.endsWith('.md')) {
-        files.push(path.join(featuresDir, name))
+      if (type !== FILE_TYPE_DIRECTORY || name === 'done' || name === 'archived') {
         continue
       }
-      if (type === FILE_TYPE_DIRECTORY && name !== 'done' && name !== 'archived') {
-        // Directory feature: <slug>/spec.md. Directories without a spec.md
-        // are malformed and skipped, just like unparseable files.
-        const specPath = path.join(featuresDir, name, 'spec.md')
-        if (await fileExists(specPath, fs)) {
-          files.push(specPath)
-        }
+      const specPath = path.join(featuresDir, name, 'spec.md')
+      if (await fileExists(specPath, fs)) {
+        files.push(specPath)
       }
     }
   } catch {
     return []
-  }
-
-  const doneDir = path.join(featuresDir, 'done')
-  try {
-    const doneEntries = await fs.readDirectory(vscode.Uri.file(doneDir))
-    for (const [name, type] of doneEntries) {
-      if (type !== FILE_TYPE_FILE || !name.endsWith('.md')) continue
-      files.push(path.join(doneDir, name))
-    }
-  } catch {
-    // done/ subfolder may not exist yet; skip
   }
 
   return files
-}
-
-/**
- * Legacy migration support: lists the `.md` files directly inside a named
- * subfolder of the features directory (e.g. `todo/`). Returns an empty list
- * when the subfolder does not exist.
- */
-export async function listStatusSubfolderFiles(
-  featuresDir: string,
-  folder: string,
-  fs: FsAdapter & { readDirectory(uri: vscode.Uri): Thenable<[string, number][]> } = vscode.workspace.fs as FsAdapter & { readDirectory(uri: vscode.Uri): Thenable<[string, number][]> }
-): Promise<string[]> {
-  const subdir = path.join(featuresDir, folder)
-  try {
-    const entries = await fs.readDirectory(vscode.Uri.file(subdir))
-    return entries
-      .filter(([name, type]) => type === FILE_TYPE_FILE && name.endsWith('.md'))
-      .map(([name]) => path.join(subdir, name))
-  } catch {
-    return []
-  }
 }
 
 /**
@@ -199,51 +100,9 @@ export function toWorkspaceRelativePath(filePath: string, workspaceRoot: string 
 }
 
 /**
- * Legacy migration support: removes a named subfolder of the features
- * directory when it has become empty (e.g. an old `todo/` status folder).
- * Swallows errors when the subfolder does not exist or cannot be read.
- */
-export async function removeStatusSubfolderIfEmpty(
-  featuresDir: string,
-  folder: string,
-  fs: FsAdapter & { readDirectory(uri: vscode.Uri): Thenable<[string, number][]>; delete(uri: vscode.Uri, options?: { recursive?: boolean }): Thenable<void> } = vscode.workspace.fs as FsAdapter & { readDirectory(uri: vscode.Uri): Thenable<[string, number][]>; delete(uri: vscode.Uri, options?: { recursive?: boolean }): Thenable<void> }
-): Promise<void> {
-  const subdir = path.join(featuresDir, folder)
-  try {
-    const entries = await fs.readDirectory(vscode.Uri.file(subdir))
-    if (entries.length === 0) {
-      await fs.delete(vscode.Uri.file(subdir))
-    }
-  } catch {
-    // Folder doesn't exist or can't be read; skip
-  }
-}
-
-/**
- * Computes the path a new feature file should take, adding `-1`, `-2`, …
- * suffixes on collision. Central decision: where a new feature file goes.
- */
-export async function getUniqueFeatureFilePath(
-  featuresDir: string,
-  status: string,
-  filename: string,
-  fs: FsAdapter = vscode.workspace.fs
-): Promise<string> {
-  let filePath = getFeatureFilePath(featuresDir, status, filename)
-  let uniqueFilename = filename
-  let counter = 1
-  while (await fileExists(filePath, fs)) {
-    uniqueFilename = `${filename}-${counter}`
-    filePath = getFeatureFilePath(featuresDir, status, uniqueFilename)
-    counter++
-  }
-  return filePath
-}
-
-/**
  * Computes a unique feature directory name from a slug, appending `-2`,
- * `-3`, … on collision. A directory or flat file with the same base name
- * counts as a collision so directory and legacy flat features never clash.
+ * `-3`, … on collision. A directory with the same base name counts as a
+ * collision so feature directories never clash.
  * Central decision: what a new feature directory is called.
  */
 export async function getUniqueFeatureDirectory(
@@ -273,9 +132,11 @@ export async function ensureFeatureDirectory(
 }
 
 /**
- * Moves a feature file into a named subfolder of the features directory
- * (e.g. `archived/`), applying `-1`, `-2`, … suffixes on collision.
- * Central decision: what happens to the file when it leaves the board.
+ * Moves a feature directory into a named subfolder of the features
+ * directory (e.g. `archived/`), applying `-1`, `-2`, … suffixes on
+ * collision. A path that is already inside the target subfolder is
+ * returned unchanged.
+ * Central decision: what happens to the feature when it leaves the board.
  */
 export async function moveFeatureToDirectory(
   currentPath: string,
@@ -283,29 +144,27 @@ export async function moveFeatureToDirectory(
   directory: string,
   fs: FsAdapter = vscode.workspace.fs
 ): Promise<string> {
-  const filename = path.basename(currentPath)
-
-  // Directory features are not moved out of their directory: archiving a
-  // directory feature is out of scope for the flat-file layout move.
-  if (filename === 'spec.md') {
+  // The path identifies a spec.md inside its feature directory: move the
+  // whole directory, never the file alone.
+  const featureDir = path.dirname(currentPath)
+  const targetDir = path.join(featuresDir, directory)
+  if (featureDir === targetDir || path.dirname(featureDir) === targetDir) {
     return currentPath
   }
 
-  const targetDir = path.join(featuresDir, directory)
-  let targetPath = path.join(targetDir, filename)
+  const dirName = path.basename(featureDir)
+  let targetPath = path.join(targetDir, dirName)
 
-  const ext = path.extname(filename)
-  const base = path.basename(filename, ext)
   let counter = 1
   while (await fileExists(targetPath, fs)) {
-    targetPath = path.join(targetDir, `${base}-${counter}${ext}`)
+    targetPath = path.join(targetDir, `${dirName}-${counter}`)
     counter++
   }
 
   await fs.createDirectory(vscode.Uri.file(targetDir))
-  await fs.rename(vscode.Uri.file(currentPath), vscode.Uri.file(targetPath))
+  await fs.rename(vscode.Uri.file(featureDir), vscode.Uri.file(targetPath))
 
-  return targetPath
+  return path.join(targetPath, 'spec.md')
 }
 
 /**
@@ -366,8 +225,8 @@ export async function getNextIssueNumber(
   return max + 1
 }
 
-// vscode.FileType.File / FileType.Directory — referenced numerically so
-// FsAdapter stubs don't need the full vscode module mocked
+// vscode.FileType.File — referenced numerically so FsAdapter stubs don't
+// need the full vscode module mocked
 const LEGACY_FILE_TYPE_FILE = 1
 
 /**

@@ -99,23 +99,6 @@
           "default": ".devtool/features",
           "description": "%config.featuresDirectory.description%"
         },
-        "kanban-markdown.filenamePattern": {
-          "type": "string",
-          "default": "name-date",
-          "enum": [
-            "name-date",
-            "date-name",
-            "name-datetime",
-            "datetime-name"
-          ],
-          "enumDescriptions": [
-            "%config.filenamePattern.nameDate%",
-            "%config.filenamePattern.dateName%",
-            "%config.filenamePattern.nameDatetime%",
-            "%config.filenamePattern.datetimeName%"
-          ],
-          "description": "%config.filenamePattern.description%"
-        },
         "kanban-markdown.defaultPriority": {
           "type": "string",
           "default": "medium",
