@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { generateFeatureFilename, getTitleFromContent } from '../../src/shared/types'
+import { generateFeatureFilename, generateFeatureSlug, getTitleFromContent } from '../../src/shared/types'
 
 // Fixed date injected into all filename tests: 2026-02-23 14:30:45
 const D = new Date(2026, 1, 23, 14, 30, 45)
@@ -127,5 +127,37 @@ describe('getTitleFromContent', () => {
 
   it('returns "Untitled" for whitespace-only content', () => {
     expect(getTitleFromContent('   \n\n  ')).toBe('Untitled')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// generateFeatureSlug
+// ---------------------------------------------------------------------------
+
+describe('generateFeatureSlug', () => {
+  it('slugifies a plain title', () => {
+    expect(generateFeatureSlug('Structure Costs')).toBe('structure-costs')
+  })
+
+  it('lowercases and strips special characters', () => {
+    expect(generateFeatureSlug('Hello! @World#')).toBe('hello-world')
+  })
+
+  it('collapses whitespace and hyphen runs to single hyphens', () => {
+    expect(generateFeatureSlug('a  --  b')).toBe('a-b')
+  })
+
+  it('trims hyphens from the start and end', () => {
+    expect(generateFeatureSlug('!leading and trailing!')).toBe('leading-and-trailing')
+  })
+
+  it('limits the slug to 50 characters', () => {
+    const long = 'a'.repeat(80)
+    expect(generateFeatureSlug(long)).toBe('a'.repeat(50))
+  })
+
+  it('falls back to "feature" when the title produces an empty slug', () => {
+    expect(generateFeatureSlug('')).toBe('feature')
+    expect(generateFeatureSlug('!@#$%')).toBe('feature')
   })
 })

@@ -124,6 +124,12 @@ describe('parseFeatureFile', () => {
       const feature = parseFeatureFile(content, FIXTURE_PATH)!
       expect(feature.id).toBe('my-feature-2026-02-23')
     })
+
+    it('falls back to the feature directory name as id for a spec.md path', () => {
+      const content = makeFrontmatter().replace(/^id: .*$/m, '') + ''
+      const feature = parseFeatureFile(content, '/workspace/.devtool/features/structure-costs/spec.md')!
+      expect(feature.id).toBe('structure-costs')
+    })
   })
 
   describe('epic', () => {

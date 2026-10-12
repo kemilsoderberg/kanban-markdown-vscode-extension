@@ -3,10 +3,10 @@ import * as path from 'path'
 import { generateKeyBetween } from 'fractional-indexing'
 import { KanbanPanel } from './KanbanPanel'
 import { SidebarViewProvider } from './SidebarViewProvider'
-import { generateFeatureFilename } from '../shared/types'
+import { generateFeatureSlug } from '../shared/types'
 import { serializeFeature } from '../shared/featureFrontmatter'
 import type { Feature, FeatureStatus, Priority } from '../shared/types'
-import { ensureFeaturesDirectory, getFeaturesDirectory, getUniqueFeatureFilePath } from './featureFileUtils'
+import { ensureFeaturesDirectory, getFeaturesDirectory, getUniqueFeatureDirectory, ensureFeatureDirectory } from './featureFileUtils'
 import { t, loadBundle } from './l10n'
 
 interface StatusQuickPickItem extends vscode.QuickPickItem {
@@ -75,16 +75,17 @@ async function createFeatureFromPrompts(): Promise<void> {
   }
   await ensureFeaturesDirectory(featuresDir)
 
-  const filename = generateFeatureFilename(title)
+  const slug = generateFeatureSlug(title)
   const now = new Date().toISOString()
 
   // Build content with title as first # heading
   const content = `# ${title}${description ? '\n\n' + description : ''}`
 
-  const filePath = await getUniqueFeatureFilePath(featuresDir, status, filename)
+  const dirName = await getUniqueFeatureDirectory(featuresDir, slug)
+  const featureDir = path.join(featuresDir, dirName)
 
   const feature: Feature = {
-    id: path.basename(filePath, '.md'),
+    id: dirName,
     status,
     priority,
     assignee: null,
@@ -96,10 +97,11 @@ async function createFeatureFromPrompts(): Promise<void> {
     labels: [],
     order: generateKeyBetween(null, null),
     content,
-    filePath
+    filePath: path.join(featureDir, 'spec.md')
   }
 
   const fileContent = serializeFeature(feature)
+  await ensureFeatureDirectory(featureDir)
   await vscode.workspace.fs.writeFile(vscode.Uri.file(feature.filePath), new TextEncoder().encode(fileContent))
 
   // Open the created file

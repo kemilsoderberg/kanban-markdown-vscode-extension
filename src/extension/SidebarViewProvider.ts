@@ -1,11 +1,11 @@
 import * as vscode from 'vscode'
 import * as crypto from 'crypto'
-import * as path from 'path'
 import { getTitleFromContent } from '../shared/types'
 import type { FeatureStatus, Priority, KanbanColumn } from '../shared/types'
 import { KanbanPanel } from './KanbanPanel'
 import { t } from './l10n'
 import { getFeaturesDirectory, listFeatureFiles } from './featureFileUtils'
+import { featureIdFromPath } from '../shared/featureFrontmatter'
 
 interface SidebarFeature {
   id: string
@@ -173,7 +173,7 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
     for (const filePath of featureFiles) {
       try {
         const content = new TextDecoder().decode(await vscode.workspace.fs.readFile(vscode.Uri.file(filePath)))
-        const parsed = this._parseFrontmatter(content, path.basename(filePath))
+        const parsed = this._parseFrontmatter(content, filePath)
         if (parsed) features.push(parsed)
       } catch {
         // Skip unreadable files
@@ -183,7 +183,7 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
     this._features = features
   }
 
-  private _parseFrontmatter(content: string, filename: string): SidebarFeature | null {
+  private _parseFrontmatter(content: string, filePath: string): SidebarFeature | null {
     content = content.replace(/\r\n/g, '\n')
     const match = content.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/)
     if (!match) return null
@@ -198,7 +198,7 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
       return v === 'null' ? '' : v
     }
 
-    const id = getValue('id') || path.basename(filename, '.md')
+    const id = getValue('id') || featureIdFromPath(filePath)
     const status = (getValue('status') as FeatureStatus) || 'backlog'
     const priority = (getValue('priority') as Priority) || 'medium'
     const title = getTitleFromContent(body)

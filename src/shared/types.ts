@@ -34,20 +34,26 @@ export function getTitleFromContent(content: string): string {
 export type FilenamePattern = 'name-date' | 'date-name' | 'name-datetime' | 'datetime-name'
 
 // Generate a filename-safe slug from a title
-export function generateFeatureFilename(
-  title: string,
-  pattern: FilenamePattern = 'name-date',
-  date: Date = new Date()
-): string {
-  const slug = title
+function slugifyTitle(title: string): string {
+  return title
     .toLowerCase()
     .replace(/[^a-z0-9\s-]/g, '') // Remove special characters
     .replace(/\s+/g, '-') // Replace spaces with hyphens
     .replace(/-+/g, '-') // Replace multiple hyphens with single
     .replace(/^-|-$/g, '') // Trim hyphens from start/end
     .slice(0, 50) // Limit length
+}
 
-  const safeSlug = slug || 'feature'
+export function generateFeatureSlug(title: string): string {
+  return slugifyTitle(title) || 'feature'
+}
+
+export function generateFeatureFilename(
+  title: string,
+  pattern: FilenamePattern = 'name-date',
+  date: Date = new Date()
+): string {
+  const safeSlug = slugifyTitle(title) || 'feature'
   const dateStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
   const timeStr = `${String(date.getHours()).padStart(2, '0')}${String(date.getMinutes()).padStart(2, '0')}${String(date.getSeconds()).padStart(2, '0')}`
 
