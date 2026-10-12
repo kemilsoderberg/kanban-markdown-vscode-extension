@@ -28,7 +28,9 @@ import {
   toWorkspaceRelativePath,
   removeStatusSubfolderIfEmpty,
   getUniqueFeatureDirectory,
-  ensureFeatureDirectory
+  ensureFeatureDirectory,
+  detectLegacyFeatureFiles,
+  migrateLegacyFeatureFiles
 } from '../../src/extension/featureFileUtils'
 
 // ---------------------------------------------------------------------------
@@ -54,6 +56,93 @@ function makeFs(existing: Set<string> = new Set()): FsAdapter & {
     rename: vi.fn(() => Promise.resolve()),
     createDirectory: vi.fn(() => Promise.resolve())
   }
+}
+
+// ---------------------------------------------------------------------------
+// In-memory filesystem FsAdapter (for migration tests)
+// ---------------------------------------------------------------------------
+
+/**
+ * A real in-memory filesystem behind the FsAdapter shape: files hold
+ * content, directories are tracked explicitly, and readDirectory /
+ * readFile / writeFile / delete / rename operate on the tree.
+ */
+function makeMemFs(initialFiles: Record<string, string> = {}, initialDirs: string[] = []) {
+  const files = new Map<string, string>(Object.entries(initialFiles))
+  const dirs = new Set<string>(initialDirs)
+
+  const isDir = (p: string): boolean => {
+    if (dirs.has(p)) return true
+    if (files.has(p)) return false
+    for (const f of files.keys()) {
+      if (f.startsWith(p + '/')) return true
+    }
+    for (const d of dirs) {
+      if (d.startsWith(p + '/')) return true
+    }
+    return false
+  }
+
+  const removeTree = (p: string) => {
+    files.delete(p)
+    dirs.delete(p)
+    for (const f of [...files.keys()]) {
+      if (f.startsWith(p + '/')) files.delete(f)
+    }
+    for (const d of [...dirs]) {
+      if (d.startsWith(p + '/')) dirs.delete(d)
+    }
+  }
+
+  const fs = {
+    stat: vi.fn(async (uri: { fsPath: string }) => {
+      const p = uri.fsPath
+      if (files.has(p)) return { type: 1, ctime: 0, mtime: 0, size: (files.get(p) || '').length }
+      if (isDir(p)) return { type: 2, ctime: 0, mtime: 0, size: 0 }
+      throw new Error('ENOENT')
+    }),
+    readDirectory: vi.fn(async (uri: { fsPath: string }) => {
+      const p = uri.fsPath
+      if (!isDir(p)) throw new Error('ENOENT')
+      const children = new Map<string, number>()
+      for (const f of files.keys()) {
+        if (!f.startsWith(p + '/')) continue
+        const rest = f.slice(p.length + 1)
+        const slash = rest.indexOf('/')
+        if (slash === -1) children.set(rest, 1)
+        else children.set(rest.slice(0, slash), 2)
+      }
+      for (const d of dirs) {
+        if (!d.startsWith(p + '/')) continue
+        const rest = d.slice(p.length + 1)
+        const slash = rest.indexOf('/')
+        if (slash === -1) children.set(rest, 2)
+        else children.set(rest.slice(0, slash), 2)
+      }
+      return [...children.entries()]
+    }),
+    readFile: vi.fn(async (uri: { fsPath: string }) => {
+      const content = files.get(uri.fsPath)
+      if (content === undefined) throw new Error('ENOENT')
+      return new TextEncoder().encode(content)
+    }),
+    writeFile: vi.fn(async (uri: { fsPath: string }, content: Uint8Array) => {
+      files.set(uri.fsPath, new TextDecoder().decode(content))
+    }),
+    createDirectory: vi.fn(async (uri: { fsPath: string }) => {
+      dirs.add(uri.fsPath)
+    }),
+    rename: vi.fn(async (source: { fsPath: string }, target: { fsPath: string }) => {
+      const content = files.get(source.fsPath)
+      if (content === undefined) throw new Error('ENOENT')
+      files.delete(source.fsPath)
+      files.set(target.fsPath, content)
+    }),
+    delete: vi.fn(async (uri: { fsPath: string }) => {
+      removeTree(uri.fsPath)
+    })
+  }
+  return { fs, files, dirs }
 }
 
 // ---------------------------------------------------------------------------
@@ -690,5 +779,246 @@ describe('removeStatusSubfolderIfEmpty', () => {
     }
     await expect(removeStatusSubfolderIfEmpty(FEATURES_DIR, 'todo', fs as unknown as FsAdapter & { readDirectory: (uri: unknown) => Promise<[string, number][]>; delete: (uri: unknown) => Promise<void> })).resolves.toBeUndefined()
     expect(fs.delete).not.toHaveBeenCalled()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// detectLegacyFeatureFiles (migration)
+// ---------------------------------------------------------------------------
+
+describe('detectLegacyFeatureFiles', () => {
+  it('lists flat root .md files and done/ .md files as legacy', async () => {
+    const { fs } = makeMemFs({
+      [path.join(FEATURES_DIR, 'alpha.md')]: '---\nid: "alpha"\n---\n# Alpha',
+      [path.join(FEATURES_DIR, 'done', 'finished.md')]: '---\nid: "finished"\n---\n# Finished'
+    }, [FEATURES_DIR, path.join(FEATURES_DIR, 'done')])
+    const files = await detectLegacyFeatureFiles(FEATURES_DIR, fs as never)
+    expect(files).toEqual([
+      path.join(FEATURES_DIR, 'alpha.md'),
+      path.join(FEATURES_DIR, 'done', 'finished.md')
+    ])
+  })
+
+  it('ignores feature directories (spec.md) and non-markdown files', async () => {
+    const { fs } = makeMemFs({
+      [path.join(FEATURES_DIR, 'dir-feature', 'spec.md')]: '---\nid: "dir-feature"\n---\n# Dir',
+      [path.join(FEATURES_DIR, 'notes.txt')]: 'not a feature'
+    }, [FEATURES_DIR, path.join(FEATURES_DIR, 'dir-feature', 'issues')])
+    const files = await detectLegacyFeatureFiles(FEATURES_DIR, fs as never)
+    expect(files).toEqual([])
+  })
+
+  it('returns an empty list when the features directory does not exist', async () => {
+    const { fs } = makeMemFs()
+    const files = await detectLegacyFeatureFiles(FEATURES_DIR, fs as never)
+    expect(files).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// migrateLegacyFeatureFiles (migration)
+// ---------------------------------------------------------------------------
+
+describe('migrateLegacyFeatureFiles', () => {
+  it('converts a flat file into <slug>/spec.md preserving content byte-for-byte', async () => {
+    const content = [
+      '---',
+      'id: "my-feature-2026-02-23"',
+      'status: "todo"',
+      'priority: "high"',
+      'assignee: null',
+      'epic: null',
+      'dueDate: null',
+      'created: "2026-02-23T10:00:00.000Z"',
+      'modified: "2026-02-23T11:00:00.000Z"',
+      'completedAt: null',
+      'labels: ["api"]',
+      'order: "a0"',
+      '---',
+      '# My Feature',
+      '',
+      'Body text here.'
+    ].join('\n')
+    const { fs, files, dirs } = makeMemFs({
+      [path.join(FEATURES_DIR, 'my-feature-2026-02-23.md')]: content
+    }, [FEATURES_DIR])
+
+    const result = await migrateLegacyFeatureFiles(FEATURES_DIR, fs as never)
+
+    expect(result.migrated).toBe(1)
+    expect(result.skipped).toBe(0)
+    const specPath = path.join(FEATURES_DIR, 'my-feature', 'spec.md')
+    expect(files.get(specPath)).toBe(content)
+    expect(files.has(path.join(FEATURES_DIR, 'my-feature-2026-02-23.md'))).toBe(false)
+    expect(dirs.has(path.join(FEATURES_DIR, 'my-feature', 'issues'))).toBe(true)
+  })
+
+  it('migrates a done/ file into a directory with status: done and removes the empty done/ folder', async () => {
+    const content = [
+      '---',
+      'id: "finished-2026-01-01"',
+      'status: "todo"',
+      'created: "2026-01-01T10:00:00.000Z"',
+      'modified: "2026-01-02T10:00:00.000Z"',
+      'order: "a1"',
+      '---',
+      '# Finished'
+    ].join('\n')
+    const { fs, files, dirs } = makeMemFs({
+      [path.join(FEATURES_DIR, 'done', 'finished-2026-01-01.md')]: content
+    }, [FEATURES_DIR, path.join(FEATURES_DIR, 'done')])
+
+    const result = await migrateLegacyFeatureFiles(FEATURES_DIR, fs as never)
+
+    expect(result.migrated).toBe(1)
+    const specPath = path.join(FEATURES_DIR, 'finished', 'spec.md')
+    const migrated = files.get(specPath) || ''
+    expect(migrated).toContain('status: "done"')
+    // every other frontmatter value is preserved exactly
+    expect(migrated).toContain('id: "finished-2026-01-01"')
+    expect(migrated).toContain('created: "2026-01-01T10:00:00.000Z"')
+    expect(migrated).toContain('modified: "2026-01-02T10:00:00.000Z"')
+    expect(migrated).toContain('order: "a1"')
+    expect(migrated).toContain('# Finished')
+    expect(files.has(path.join(FEATURES_DIR, 'done', 'finished-2026-01-01.md'))).toBe(false)
+    expect(dirs.has(path.join(FEATURES_DIR, 'done'))).toBe(false)
+  })
+
+  it('skips files whose frontmatter cannot be parsed', async () => {
+    const raw = 'no frontmatter here, just text'
+    const { fs, files, dirs } = makeMemFs({
+      [path.join(FEATURES_DIR, 'broken.md')]: raw
+    }, [FEATURES_DIR])
+
+    const result = await migrateLegacyFeatureFiles(FEATURES_DIR, fs as never)
+
+    expect(result.migrated).toBe(0)
+    expect(result.skipped).toBe(1)
+    expect(files.get(path.join(FEATURES_DIR, 'broken.md'))).toBe(raw)
+    expect(dirs.has(path.join(FEATURES_DIR, 'feature'))).toBe(false)
+  })
+
+  it('appends -2 when two flat files slugify to the same directory name', async () => {
+    const make = (id: string) => `---\nid: "${id}"\nstatus: "todo"\n---\n# Same Title\n`
+    const { fs, files } = makeMemFs({
+      [path.join(FEATURES_DIR, 'first.md')]: make('first'),
+      [path.join(FEATURES_DIR, 'second.md')]: make('second')
+    }, [FEATURES_DIR])
+
+    const result = await migrateLegacyFeatureFiles(FEATURES_DIR, fs as never)
+
+    expect(result.migrated).toBe(2)
+    expect(files.has(path.join(FEATURES_DIR, 'same-title', 'spec.md'))).toBe(true)
+    expect(files.has(path.join(FEATURES_DIR, 'same-title-2', 'spec.md'))).toBe(true)
+  })
+
+  it('does not collide with the migrating file itself', async () => {
+    const content = '---\nid: "alpha"\nstatus: "todo"\n---\n# Alpha\n'
+    const { fs, files } = makeMemFs({
+      [path.join(FEATURES_DIR, 'alpha.md')]: content
+    }, [FEATURES_DIR])
+
+    await migrateLegacyFeatureFiles(FEATURES_DIR, fs as never)
+
+    expect(files.has(path.join(FEATURES_DIR, 'alpha', 'spec.md'))).toBe(true)
+    expect(files.has(path.join(FEATURES_DIR, 'alpha-2', 'spec.md'))).toBe(false)
+  })
+
+  it('collides with an existing feature directory of the same slug', async () => {
+    const existingSpec = '---\nid: "existing"\nstatus: "todo"\n---\n# Existing\n'
+    const incoming = '---\nid: "incoming"\nstatus: "todo"\n---\n# Existing\n'
+    const { fs, files } = makeMemFs({
+      [path.join(FEATURES_DIR, 'existing', 'spec.md')]: existingSpec,
+      [path.join(FEATURES_DIR, 'incoming.md')]: incoming
+    }, [FEATURES_DIR, path.join(FEATURES_DIR, 'existing', 'issues')])
+
+    const result = await migrateLegacyFeatureFiles(FEATURES_DIR, fs as never)
+
+    expect(result.migrated).toBe(1)
+    expect(files.has(path.join(FEATURES_DIR, 'existing-2', 'spec.md'))).toBe(true)
+    expect(files.get(path.join(FEATURES_DIR, 'existing', 'spec.md'))).toBe(existingSpec)
+  })
+
+  it('removes other empty legacy status folders during migration', async () => {
+    const content = '---\nid: "alpha"\nstatus: "todo"\n---\n# Alpha\n'
+    const { fs, dirs } = makeMemFs({
+      [path.join(FEATURES_DIR, 'alpha.md')]: content
+    }, [FEATURES_DIR, path.join(FEATURES_DIR, 'review')])
+
+    await migrateLegacyFeatureFiles(FEATURES_DIR, fs as never)
+
+    expect(dirs.has(path.join(FEATURES_DIR, 'review'))).toBe(false)
+  })
+
+  it('keeps done/ when a legacy file inside it failed to migrate', async () => {
+    const parseable = '---\nid: "alpha"\nstatus: "todo"\n---\n# Alpha\n'
+    const { fs, dirs } = makeMemFs({
+      [path.join(FEATURES_DIR, 'done', 'broken.md')]: 'no frontmatter',
+      [path.join(FEATURES_DIR, 'alpha.md')]: parseable
+    }, [FEATURES_DIR, path.join(FEATURES_DIR, 'done')])
+
+    const result = await migrateLegacyFeatureFiles(FEATURES_DIR, fs as never)
+
+    expect(result.migrated).toBe(1)
+    expect(result.skipped).toBe(1)
+    expect(dirs.has(path.join(FEATURES_DIR, 'done'))).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// migrateLegacyFeatureFiles — dialog gate
+// ---------------------------------------------------------------------------
+
+describe('migrateLegacyFeatureFiles dialog gate', () => {
+  const content = '---\nid: "alpha"\nstatus: "todo"\n---\n# Alpha\n'
+
+  it('is called once with the legacy count before any file moves, and declining leaves disk untouched', async () => {
+    const { fs, files } = makeMemFs({
+      [path.join(FEATURES_DIR, 'alpha.md')]: content,
+      [path.join(FEATURES_DIR, 'beta.md')]: '---\nid: "beta"\nstatus: "todo"\n---\n# Beta\n'
+    }, [FEATURES_DIR])
+
+    const confirm = vi.fn(async (_count: number) => false)
+    const result = await migrateLegacyFeatureFiles(FEATURES_DIR, fs as never, confirm)
+
+    expect(confirm).toHaveBeenCalledOnce()
+    expect(confirm).toHaveBeenCalledWith(2)
+    expect(result.cancelled).toBe(true)
+    expect(result.migrated).toBe(0)
+    // disk untouched
+    expect(files.get(path.join(FEATURES_DIR, 'alpha.md'))).toBe(content)
+    expect(files.has(path.join(FEATURES_DIR, 'beta.md'))).toBe(true)
+  })
+
+  it('accepting the dialog performs the migration', async () => {
+    const { fs, files } = makeMemFs({
+      [path.join(FEATURES_DIR, 'alpha.md')]: content
+    }, [FEATURES_DIR])
+
+    const confirm = vi.fn(async () => true)
+    const result = await migrateLegacyFeatureFiles(FEATURES_DIR, fs as never, confirm)
+
+    expect(confirm).toHaveBeenCalledOnce()
+    expect(result.cancelled).toBe(false)
+    expect(result.migrated).toBe(1)
+    expect(files.has(path.join(FEATURES_DIR, 'alpha', 'spec.md'))).toBe(true)
+    expect(files.has(path.join(FEATURES_DIR, 'alpha.md'))).toBe(false)
+  })
+
+  it('does not prompt when there is nothing to migrate', async () => {
+    const { fs } = makeMemFs({}, [FEATURES_DIR])
+    const confirm = vi.fn(async () => true)
+    const result = await migrateLegacyFeatureFiles(FEATURES_DIR, fs as never, confirm)
+    expect(confirm).not.toHaveBeenCalled()
+    expect(result.cancelled).toBe(false)
+  })
+
+  it('migrates without prompting when no confirm callback is provided', async () => {
+    const { fs, files } = makeMemFs({
+      [path.join(FEATURES_DIR, 'alpha.md')]: content
+    }, [FEATURES_DIR])
+    const result = await migrateLegacyFeatureFiles(FEATURES_DIR, fs as never)
+    expect(result.migrated).toBe(1)
+    expect(files.has(path.join(FEATURES_DIR, 'alpha', 'spec.md'))).toBe(true)
   })
 })
