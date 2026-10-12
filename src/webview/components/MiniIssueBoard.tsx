@@ -1,10 +1,10 @@
 import { useState, useCallback } from 'react'
-import { X } from 'lucide-react'
+import { Wand2, X } from 'lucide-react'
 import { useStore } from '../store'
 import { vscode } from '../vscodeApi'
 import { t } from '../lib/i18n'
 import { cn } from '../lib/utils'
-import type { Issue, IssueStatus } from '../../shared/types'
+import type { AIAgent, AIPermissionMode, Issue, IssueStatus } from '../../shared/types'
 
 const ISSUE_COLUMNS: { id: IssueStatus; nameKey: string }[] = [
   { id: 'todo', nameKey: 'status.todo' },
@@ -20,9 +20,11 @@ const ISSUE_COLUMN_DOTS: Record<IssueStatus, string> = {
 
 interface MiniIssueBoardProps {
   featureId: string
+  /** When set, issue cards get a Build-with-AI affordance (issue-scoped). */
+  onStartWithAI?: (issueId: string | null, agent: AIAgent, permissionMode: AIPermissionMode) => void
 }
 
-export function MiniIssueBoard({ featureId }: MiniIssueBoardProps) {
+export function MiniIssueBoard({ featureId, onStartWithAI }: MiniIssueBoardProps) {
   const features = useStore((s) => s.features)
   const getIssuesByStatus = useStore((s) => s.getIssuesByStatus)
   const [draggedIssueId, setDraggedIssueId] = useState<string | null>(null)
@@ -105,6 +107,17 @@ export function MiniIssueBoard({ featureId }: MiniIssueBoardProps) {
                     {issue.title}
                   </span>
                 </button>
+                {onStartWithAI && (
+                  <button
+                    onClick={() => onStartWithAI(issue.id, 'claude', 'default')}
+                    title={t('editor.buildIssueWithAI')}
+                    aria-label={t('editor.buildIssueWithAI')}
+                    className="opacity-0 group-hover/mini-issue:opacity-100 shrink-0 transition-opacity cursor-pointer"
+                    style={{ color: 'var(--vscode-descriptionForeground)' }}
+                  >
+                    <Wand2 size={10} />
+                  </button>
+                )}
                 <button
                   onClick={() =>
                     vscode.postMessage({ type: 'deleteIssue', featureId, issueId: issue.id })

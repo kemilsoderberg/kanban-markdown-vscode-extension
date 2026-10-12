@@ -13,20 +13,13 @@ vi.mock('vscode', () => ({
 }))
 
 import {
-  getFeatureFilePath,
-  getStatusFromPath,
   fileExists,
-  ensureStatusSubfolders,
-  moveFeatureFile,
   getFeaturesDirectory,
   isFeatureFilePath,
   ensureFeaturesDirectory,
   listFeatureFiles,
-  getUniqueFeatureFilePath,
   moveFeatureToDirectory,
-  listStatusSubfolderFiles,
   toWorkspaceRelativePath,
-  removeStatusSubfolderIfEmpty,
   getUniqueFeatureDirectory,
   ensureFeatureDirectory,
   detectLegacyFeatureFiles,
@@ -146,50 +139,6 @@ function makeMemFs(initialFiles: Record<string, string> = {}, initialDirs: strin
 }
 
 // ---------------------------------------------------------------------------
-// getFeatureFilePath
-// ---------------------------------------------------------------------------
-
-describe('getFeatureFilePath', () => {
-  it('returns path under done/ when status is "done"', () => {
-    expect(getFeatureFilePath(FEATURES_DIR, 'done', 'my-feature-2026-02-23'))
-      .toBe(path.join(FEATURES_DIR, 'done', 'my-feature-2026-02-23.md'))
-  })
-
-  it('returns path at root for any non-done status', () => {
-    for (const status of ['backlog', 'todo', 'in-progress', 'review']) {
-      expect(getFeatureFilePath(FEATURES_DIR, status, 'my-feature'))
-        .toBe(path.join(FEATURES_DIR, 'my-feature.md'))
-    }
-  })
-})
-
-// ---------------------------------------------------------------------------
-// getStatusFromPath
-// ---------------------------------------------------------------------------
-
-describe('getStatusFromPath', () => {
-  it('returns "done" for a file inside the done/ subdirectory', () => {
-    const filePath = path.join(FEATURES_DIR, 'done', 'my-feature.md')
-    expect(getStatusFromPath(filePath, FEATURES_DIR)).toBe('done')
-  })
-
-  it('returns null for a file at the features root', () => {
-    const filePath = path.join(FEATURES_DIR, 'my-feature.md')
-    expect(getStatusFromPath(filePath, FEATURES_DIR)).toBeNull()
-  })
-
-  it('returns null for a file nested deeper than done/', () => {
-    const filePath = path.join(FEATURES_DIR, 'done', 'archive', 'old.md')
-    expect(getStatusFromPath(filePath, FEATURES_DIR)).toBeNull()
-  })
-
-  it('returns null for a file in a non-done subdirectory', () => {
-    const filePath = path.join(FEATURES_DIR, 'review', 'my-feature.md')
-    expect(getStatusFromPath(filePath, FEATURES_DIR)).toBeNull()
-  })
-})
-
-// ---------------------------------------------------------------------------
 // fileExists
 // ---------------------------------------------------------------------------
 
@@ -207,94 +156,8 @@ describe('fileExists', () => {
 })
 
 // ---------------------------------------------------------------------------
-// ensureStatusSubfolders
+// moveFeatureToDirectory
 // ---------------------------------------------------------------------------
-
-describe('ensureStatusSubfolders', () => {
-  it('calls createDirectory with the done/ path', async () => {
-    const fs = makeFs()
-    await ensureStatusSubfolders(FEATURES_DIR, fs)
-    expect(fs.createDirectory).toHaveBeenCalledOnce()
-    const uri = (fs.createDirectory as ReturnType<typeof vi.fn>).mock.calls[0][0]
-    expect(uri.fsPath).toBe(path.join(FEATURES_DIR, 'done'))
-  })
-})
-
-// ---------------------------------------------------------------------------
-// moveFeatureFile
-// ---------------------------------------------------------------------------
-
-describe('moveFeatureFile', () => {
-  const currentPath = path.join(FEATURES_DIR, 'my-feature.md')
-
-  it('returns currentPath unchanged when target equals current (no-op)', async () => {
-    // Moving a done file to done — currentPath is already in done/
-    const donePath = path.join(FEATURES_DIR, 'done', 'my-feature.md')
-    const fs = makeFs()
-    const result = await moveFeatureFile(donePath, FEATURES_DIR, 'done', fs)
-    expect(result).toBe(donePath)
-    expect(fs.rename).not.toHaveBeenCalled()
-  })
-
-  it('moves to root dir for non-done status', async () => {
-    const fs = makeFs()
-    // currentPath is already at root, so move a file from done/ back to root instead
-    const fromDone = path.join(FEATURES_DIR, 'done', 'my-feature.md')
-    const result2 = await moveFeatureFile(fromDone, FEATURES_DIR, 'in-progress', fs)
-    expect(result2).toBe(path.join(FEATURES_DIR, 'my-feature.md'))
-    expect(fs.rename).toHaveBeenCalledOnce()
-  })
-
-  it('moves to done/ subdir when newStatus is "done"', async () => {
-    const fs = makeFs()
-    const result = await moveFeatureFile(currentPath, FEATURES_DIR, 'done', fs)
-    expect(result).toBe(path.join(FEATURES_DIR, 'done', 'my-feature.md'))
-    expect(fs.rename).toHaveBeenCalledOnce()
-  })
-
-  it('calls createDirectory on the target directory before renaming', async () => {
-    const fs = makeFs()
-    await moveFeatureFile(currentPath, FEATURES_DIR, 'done', fs)
-    expect(fs.createDirectory).toHaveBeenCalledOnce()
-    const uri = (fs.createDirectory as ReturnType<typeof vi.fn>).mock.calls[0][0]
-    expect(uri.fsPath).toBe(path.join(FEATURES_DIR, 'done'))
-  })
-
-  it('applies a -1 suffix when the target path is already taken', async () => {
-    const target = path.join(FEATURES_DIR, 'done', 'my-feature.md')
-    const fs = makeFs(new Set([target]))
-    const result = await moveFeatureFile(currentPath, FEATURES_DIR, 'done', fs)
-    expect(result).toBe(path.join(FEATURES_DIR, 'done', 'my-feature-1.md'))
-  })
-
-  it('increments counter until a free path is found', async () => {
-    const target0 = path.join(FEATURES_DIR, 'done', 'my-feature.md')
-    const target1 = path.join(FEATURES_DIR, 'done', 'my-feature-1.md')
-    const target2 = path.join(FEATURES_DIR, 'done', 'my-feature-2.md')
-    const fs = makeFs(new Set([target0, target1, target2]))
-    const result = await moveFeatureFile(currentPath, FEATURES_DIR, 'done', fs)
-    expect(result).toBe(path.join(FEATURES_DIR, 'done', 'my-feature-3.md'))
-  })
-
-  it('passes the correct source and target URIs to rename', async () => {
-    const fs = makeFs()
-    await moveFeatureFile(currentPath, FEATURES_DIR, 'done', fs)
-    const [from, to] = (fs.rename as ReturnType<typeof vi.fn>).mock.calls[0]
-    expect(from.fsPath).toBe(currentPath)
-    expect(to.fsPath).toBe(path.join(FEATURES_DIR, 'done', 'my-feature.md'))
-  })
-
-  it('is a no-op for a spec.md inside a feature directory regardless of status', async () => {
-    const specPath = path.join(FEATURES_DIR, 'my-feature', 'spec.md')
-    for (const status of ['backlog', 'todo', 'in-progress', 'review', 'done']) {
-      const fs = makeFs()
-      const result = await moveFeatureFile(specPath, FEATURES_DIR, status, fs)
-      expect(result).toBe(specPath)
-      expect(fs.rename).not.toHaveBeenCalled()
-      expect(fs.createDirectory).not.toHaveBeenCalled()
-    }
-  })
-})
 
 // ---------------------------------------------------------------------------
 // getUniqueFeatureDirectory
@@ -382,14 +245,14 @@ describe('getFeaturesDirectory', () => {
 })
 
 describe('isFeatureFilePath', () => {
-  it('accepts a .md file directly in the features directory', () => {
+  it('rejects a flat .md file in the features directory (legacy layout)', () => {
     const filePath = path.join(FEATURES_DIR, 'my-feature.md')
-    expect(isFeatureFilePath(filePath, FEATURES_DIR)).toBe(true)
+    expect(isFeatureFilePath(filePath, FEATURES_DIR)).toBe(false)
   })
 
-  it('accepts a .md file inside the done/ subfolder', () => {
+  it('rejects a .md file inside the done/ subfolder (legacy layout)', () => {
     const filePath = path.join(FEATURES_DIR, 'done', 'my-feature.md')
-    expect(isFeatureFilePath(filePath, FEATURES_DIR)).toBe(true)
+    expect(isFeatureFilePath(filePath, FEATURES_DIR)).toBe(false)
   })
 
   it('rejects non-markdown files', () => {
@@ -416,11 +279,6 @@ describe('isFeatureFilePath', () => {
     expect(isFeatureFilePath(filePath, FEATURES_DIR)).toBe(true)
   })
 
-  it('accepts done/spec.md inside a feature directory in done/', () => {
-    const filePath = path.join(FEATURES_DIR, 'done', 'my-feature', 'spec.md')
-    expect(isFeatureFilePath(filePath, FEATURES_DIR)).toBe(true)
-  })
-
   it('rejects issue files inside a feature directory', () => {
     const filePath = path.join(FEATURES_DIR, 'my-feature', 'issues', '001-setup.md')
     expect(isFeatureFilePath(filePath, FEATURES_DIR)).toBe(false)
@@ -437,21 +295,12 @@ describe('isFeatureFilePath', () => {
 // ---------------------------------------------------------------------------
 
 describe('ensureFeaturesDirectory', () => {
-  it('creates the features directory and the done/ subfolder', async () => {
+  it('creates only the features directory', async () => {
     const fs = makeFs()
     await ensureFeaturesDirectory(FEATURES_DIR, fs)
-    const calls = (fs.createDirectory as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0].fsPath)
-    expect(calls).toContain(FEATURES_DIR)
-    expect(calls).toContain(path.join(FEATURES_DIR, 'done'))
-  })
-
-  it('calls createDirectory twice: features dir first, then done/', async () => {
-    const fs = makeFs()
-    await ensureFeaturesDirectory(FEATURES_DIR, fs)
-    expect(fs.createDirectory).toHaveBeenCalledTimes(2)
-    const calls = (fs.createDirectory as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0].fsPath)
-    expect(calls[0]).toBe(FEATURES_DIR)
-    expect(calls[1]).toBe(path.join(FEATURES_DIR, 'done'))
+    expect(fs.createDirectory).toHaveBeenCalledOnce()
+    const uri = (fs.createDirectory as ReturnType<typeof vi.fn>).mock.calls[0][0]
+    expect(uri.fsPath).toBe(FEATURES_DIR)
   })
 })
 
@@ -463,26 +312,26 @@ describe('listFeatureFiles', () => {
   const md = { type: 1 }  // vscode.FileType.File === 1
   const dir = { type: 2 } // vscode.FileType.Directory === 2
 
-  it('lists root-level .md files and done/ subfolder .md files', async () => {
+  it('reads only <slug>/spec.md directories — flat files are not features', async () => {
     const fs = {
-      stat: vi.fn(async (_uri: { fsPath: string }) => { throw new Error('ENOENT') }),
+      stat: vi.fn(async (uri: { fsPath: string }) => {
+        if (uri.fsPath === path.join(FEATURES_DIR, 'dir-feature', 'spec.md')) return {}
+        throw new Error('ENOENT')
+      }),
       rename: vi.fn(),
       createDirectory: vi.fn(),
       readDirectory: vi.fn(async (uri: { fsPath: string }) => {
         if (uri.fsPath === FEATURES_DIR) {
-          return [['root.md', md.type], ['notes.txt', md.type], ['sub', dir.type], ['done', dir.type]]
+          return [['flat-feature.md', md.type], ['dir-feature', dir.type], ['notes.txt', md.type]]
         }
-        if (uri.fsPath === path.join(FEATURES_DIR, 'done')) {
-          return [['finished.md', md.type], ['draft.txt', md.type]]
+        if (uri.fsPath === path.join(FEATURES_DIR, 'dir-feature')) {
+          return [['spec.md', md.type], ['issues', dir.type]]
         }
         throw new Error('ENOENT')
       })
     }
     const files = await listFeatureFiles(FEATURES_DIR, fs as unknown as FsAdapter & { readDirectory: (uri: unknown) => Promise<[string, number][]> })
-    expect(files).toEqual([
-      path.join(FEATURES_DIR, 'root.md'),
-      path.join(FEATURES_DIR, 'done', 'finished.md')
-    ])
+    expect(files).toEqual([path.join(FEATURES_DIR, 'dir-feature', 'spec.md')])
   })
 
   it('returns an empty array when the features directory cannot be read', async () => {
@@ -494,34 +343,6 @@ describe('listFeatureFiles', () => {
     }
     const files = await listFeatureFiles(FEATURES_DIR, fs as unknown as FsAdapter & { readDirectory: (uri: unknown) => Promise<[string, number][]> })
     expect(files).toEqual([])
-  })
-  it('lists spec.md from feature directories alongside flat .md files', async () => {
-    const fs = {
-      stat: vi.fn(async (uri: { fsPath: string }) => {
-        if (uri.fsPath === path.join(FEATURES_DIR, 'dir-feature', 'spec.md')) return {}
-        throw new Error('ENOENT')
-      }),
-      rename: vi.fn(),
-      createDirectory: vi.fn(),
-      readDirectory: vi.fn(async (uri: { fsPath: string }) => {
-        if (uri.fsPath === FEATURES_DIR) {
-          return [['flat-feature.md', md.type], ['dir-feature', dir.type], ['done', dir.type], ['notes.txt', md.type]]
-        }
-        if (uri.fsPath === path.join(FEATURES_DIR, 'dir-feature')) {
-          return [['spec.md', md.type], ['issues', dir.type]]
-        }
-        if (uri.fsPath === path.join(FEATURES_DIR, 'done')) {
-          return [['finished.md', md.type]]
-        }
-        throw new Error('ENOENT')
-      })
-    }
-    const files = await listFeatureFiles(FEATURES_DIR, fs as unknown as FsAdapter & { readDirectory: (uri: unknown) => Promise<[string, number][]> })
-    expect(files).toEqual([
-      path.join(FEATURES_DIR, 'flat-feature.md'),
-      path.join(FEATURES_DIR, 'dir-feature', 'spec.md'),
-      path.join(FEATURES_DIR, 'done', 'finished.md')
-    ])
   })
 
   it('skips directories without a spec.md (malformed)', async () => {
@@ -565,16 +386,13 @@ describe('listFeatureFiles', () => {
           return [['finished.md', md.type]]
         }
         if (uri.fsPath === path.join(FEATURES_DIR, 'archived')) {
-          return [['old-feature.md', md.type]]
+          return [['old-feature', dir.type]]
         }
         throw new Error('ENOENT')
       })
     }
     const files = await listFeatureFiles(FEATURES_DIR, fs as unknown as FsAdapter & { readDirectory: (uri: unknown) => Promise<[string, number][]> })
-    expect(files).toEqual([
-      path.join(FEATURES_DIR, 'real-feature', 'spec.md'),
-      path.join(FEATURES_DIR, 'done', 'finished.md')
-    ])
+    expect(files).toEqual([path.join(FEATURES_DIR, 'real-feature', 'spec.md')])
   })
 
   it('does not include issue files from a feature directory', async () => {
@@ -605,56 +423,23 @@ describe('listFeatureFiles', () => {
 
 
 // ---------------------------------------------------------------------------
-// getUniqueFeatureFilePath
-// ---------------------------------------------------------------------------
-
-describe('getUniqueFeatureFilePath', () => {
-  it('returns the plain path when nothing collides', async () => {
-    const fs = makeFs()
-    const result = await getUniqueFeatureFilePath(FEATURES_DIR, 'todo', 'my-feature', fs)
-    expect(result).toBe(path.join(FEATURES_DIR, 'my-feature.md'))
-  })
-
-  it('appends -1 then -2 when earlier names are taken', async () => {
-    const fs = makeFs(new Set([
-      path.join(FEATURES_DIR, 'my-feature.md'),
-      path.join(FEATURES_DIR, 'my-feature-1.md')
-    ]))
-    const result = await getUniqueFeatureFilePath(FEATURES_DIR, 'todo', 'my-feature', fs)
-    expect(result).toBe(path.join(FEATURES_DIR, 'my-feature-2.md'))
-  })
-
-  it('routes done features into done/ before checking collisions', async () => {
-    const fs = makeFs(new Set([path.join(FEATURES_DIR, 'done', 'my-feature.md')]))
-    const result = await getUniqueFeatureFilePath(FEATURES_DIR, 'done', 'my-feature', fs)
-    expect(result).toBe(path.join(FEATURES_DIR, 'done', 'my-feature-1.md'))
-  })
-
-  it('returns the same location as getFeatureFilePath for a free name', async () => {
-    const fs = makeFs()
-    const result = await getUniqueFeatureFilePath(FEATURES_DIR, 'done', 'archived-feature', fs)
-    expect(result).toBe(getFeatureFilePath(FEATURES_DIR, 'done', 'archived-feature'))
-  })
-})
-
-// ---------------------------------------------------------------------------
 // moveFeatureToDirectory
 // ---------------------------------------------------------------------------
 
 describe('moveFeatureToDirectory', () => {
-  it('renames a file into the target subfolder with no collision suffix', async () => {
+  it('renames a feature directory into the target subfolder with no collision suffix', async () => {
     const fs = makeFs()
-    const source = path.join(FEATURES_DIR, 'archived', 'my-feature.md')
+    const source = path.join(FEATURES_DIR, 'my-feature', 'spec.md')
     const result = await moveFeatureToDirectory(source, FEATURES_DIR, 'archived', fs)
-    expect(result).toBe(path.join(FEATURES_DIR, 'archived', 'my-feature.md'))
+    expect(result).toBe(path.join(FEATURES_DIR, 'archived', 'my-feature', 'spec.md'))
     const [from, to] = (fs.rename as ReturnType<typeof vi.fn>).mock.calls[0]
-    expect(from.fsPath).toBe(source)
-    expect(to.fsPath).toBe(path.join(FEATURES_DIR, 'archived', 'my-feature.md'))
+    expect(from.fsPath).toBe(path.join(FEATURES_DIR, 'my-feature'))
+    expect(to.fsPath).toBe(path.join(FEATURES_DIR, 'archived', 'my-feature'))
   })
 
   it('creates the target directory before renaming', async () => {
     const fs = makeFs()
-    const source = path.join(FEATURES_DIR, 'my-feature.md')
+    const source = path.join(FEATURES_DIR, 'my-feature', 'spec.md')
     await moveFeatureToDirectory(source, FEATURES_DIR, 'archived', fs)
     const uri = (fs.createDirectory as ReturnType<typeof vi.fn>).mock.calls[0][0]
     expect(uri.fsPath).toBe(path.join(FEATURES_DIR, 'archived'))
@@ -662,15 +447,15 @@ describe('moveFeatureToDirectory', () => {
   })
 
   it('applies -1 suffix when the target name already exists', async () => {
-    const source = path.join(FEATURES_DIR, 'my-feature.md')
-    const taken = path.join(FEATURES_DIR, 'archived', 'my-feature.md')
+    const source = path.join(FEATURES_DIR, 'my-feature', 'spec.md')
+    const taken = path.join(FEATURES_DIR, 'archived', 'my-feature')
     const fs = makeFs(new Set([taken]))
     const result = await moveFeatureToDirectory(source, FEATURES_DIR, 'archived', fs)
-    expect(result).toBe(path.join(FEATURES_DIR, 'archived', 'my-feature-1.md'))
+    expect(result).toBe(path.join(FEATURES_DIR, 'archived', 'my-feature-1', 'spec.md'))
   })
 
-  it('is a no-op for a spec.md inside a feature directory', async () => {
-    const specPath = path.join(FEATURES_DIR, 'my-feature', 'spec.md')
+  it('never renames a feature directory already inside the target subfolder', async () => {
+    const specPath = path.join(FEATURES_DIR, 'archived', 'my-feature', 'spec.md')
     const fs = makeFs()
     const result = await moveFeatureToDirectory(specPath, FEATURES_DIR, 'archived', fs)
     expect(result).toBe(specPath)
@@ -680,105 +465,25 @@ describe('moveFeatureToDirectory', () => {
 })
 
 // ---------------------------------------------------------------------------
-// listStatusSubfolderFiles (legacy migration support)
-// ---------------------------------------------------------------------------
-
-describe('listStatusSubfolderFiles', () => {
-  const md = { type: 1 }
-  const dir = { type: 2 }
-
-  it('lists only .md files directly in the given subfolder', async () => {
-    const subdir = path.join(FEATURES_DIR, 'todo')
-    const fs = {
-      stat: vi.fn(),
-      rename: vi.fn(),
-      createDirectory: vi.fn(),
-      readDirectory: vi.fn(async () => [
-        ['a.md', md.type],
-        ['b.txt', md.type],
-        ['nested', dir.type]
-      ])
-    }
-    const files = await listStatusSubfolderFiles(FEATURES_DIR, 'todo', fs as unknown as FsAdapter & { readDirectory: (uri: unknown) => Promise<[string, number][]> })
-    expect(files).toEqual([path.join(subdir, 'a.md')])
-  })
-
-  it('returns an empty array when the subfolder does not exist', async () => {
-    const fs = {
-      stat: vi.fn(),
-      rename: vi.fn(),
-      createDirectory: vi.fn(),
-      readDirectory: vi.fn(async () => { throw new Error('ENOENT') })
-    }
-    const files = await listStatusSubfolderFiles(FEATURES_DIR, 'review', fs as unknown as FsAdapter & { readDirectory: (uri: unknown) => Promise<[string, number][]> })
-    expect(files).toEqual([])
-  })
-})
-
-// ---------------------------------------------------------------------------
 // toWorkspaceRelativePath
 // ---------------------------------------------------------------------------
 
 describe('toWorkspaceRelativePath', () => {
   it('returns the path relative to the workspace root', () => {
-    const filePath = path.join(FEATURES_DIR, 'done', 'my-feature.md')
+    const filePath = path.join(FEATURES_DIR, 'my-feature', 'spec.md')
     expect(toWorkspaceRelativePath(filePath, '/workspace')).toBe(
-      path.join('.devtool/features', 'done', 'my-feature.md')
+      path.join('.devtool/features', 'my-feature', 'spec.md')
     )
   })
 
   it('returns the absolute path when there is no workspace root', () => {
-    const filePath = path.join(FEATURES_DIR, 'my-feature.md')
+    const filePath = path.join(FEATURES_DIR, 'my-feature', 'spec.md')
     expect(toWorkspaceRelativePath(filePath, null)).toBe(filePath)
   })
 
   it('returns the absolute path when the file is outside the workspace', () => {
     const filePath = path.join('/elsewhere', 'my-feature.md')
     expect(toWorkspaceRelativePath(filePath, '/workspace')).toBe(filePath)
-  })
-})
-
-// ---------------------------------------------------------------------------
-// removeStatusSubfolderIfEmpty
-// ---------------------------------------------------------------------------
-
-describe('removeStatusSubfolderIfEmpty', () => {
-  it('deletes the subfolder when reading it returns no entries', async () => {
-    const fs = {
-      stat: vi.fn(),
-      rename: vi.fn(),
-      createDirectory: vi.fn(),
-      readDirectory: vi.fn(async () => []),
-      delete: vi.fn(async () => {})
-    }
-    await removeStatusSubfolderIfEmpty(FEATURES_DIR, 'review', fs as unknown as FsAdapter & { readDirectory: (uri: unknown) => Promise<[string, number][]>; delete: (uri: unknown) => Promise<void> })
-    expect(fs.delete).toHaveBeenCalledTimes(1)
-    const uri = (fs.delete as ReturnType<typeof vi.fn>).mock.calls[0][0]
-    expect(uri.fsPath).toBe(path.join(FEATURES_DIR, 'review'))
-  })
-
-  it('does not delete when the subfolder still contains entries', async () => {
-    const fs = {
-      stat: vi.fn(),
-      rename: vi.fn(),
-      createDirectory: vi.fn(),
-      readDirectory: vi.fn(async () => [['leftover.md', 1]]),
-      delete: vi.fn(async () => {})
-    }
-    await removeStatusSubfolderIfEmpty(FEATURES_DIR, 'todo', fs as unknown as FsAdapter & { readDirectory: (uri: unknown) => Promise<[string, number][]>; delete: (uri: unknown) => Promise<void> })
-    expect(fs.delete).not.toHaveBeenCalled()
-  })
-
-  it('swallows errors when the subfolder does not exist', async () => {
-    const fs = {
-      stat: vi.fn(),
-      rename: vi.fn(),
-      createDirectory: vi.fn(),
-      readDirectory: vi.fn(async () => { throw new Error('ENOENT') }),
-      delete: vi.fn(async () => {})
-    }
-    await expect(removeStatusSubfolderIfEmpty(FEATURES_DIR, 'todo', fs as unknown as FsAdapter & { readDirectory: (uri: unknown) => Promise<[string, number][]>; delete: (uri: unknown) => Promise<void> })).resolves.toBeUndefined()
-    expect(fs.delete).not.toHaveBeenCalled()
   })
 })
 

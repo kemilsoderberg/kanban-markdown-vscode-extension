@@ -1,92 +1,46 @@
 import { describe, it, expect } from 'vitest'
-import { generateFeatureFilename, generateFeatureSlug, getTitleFromContent } from '../../src/shared/types'
-
-// Fixed date injected into all filename tests: 2026-02-23 14:30:45
-const D = new Date(2026, 1, 23, 14, 30, 45)
+import { generateFeatureSlug, getTitleFromContent } from '../../src/shared/types'
 
 // ---------------------------------------------------------------------------
-// generateFeatureFilename
+// generateFeatureSlug
 // ---------------------------------------------------------------------------
 
-describe('generateFeatureFilename', () => {
-  describe('filename patterns', () => {
-    it('name-date (default) produces <slug>-<date>', () => {
-      expect(generateFeatureFilename('My Feature', 'name-date', D)).toBe('my-feature-2026-02-23')
-    })
-
-    it('date-name produces <date>-<slug>', () => {
-      expect(generateFeatureFilename('My Feature', 'date-name', D)).toBe('2026-02-23-my-feature')
-    })
-
-    it('name-datetime produces <slug>-<date>-<time>', () => {
-      expect(generateFeatureFilename('My Feature', 'name-datetime', D)).toBe('my-feature-2026-02-23-143045')
-    })
-
-    it('datetime-name produces <date>-<time>-<slug>', () => {
-      expect(generateFeatureFilename('My Feature', 'datetime-name', D)).toBe('2026-02-23-143045-my-feature')
-    })
-
-    it('defaults to name-date when no pattern supplied', () => {
-      expect(generateFeatureFilename('My Feature', undefined, D)).toBe('my-feature-2026-02-23')
-    })
+describe('generateFeatureSlug', () => {
+  it('lowercases the title', () => {
+    expect(generateFeatureSlug('UPPER CASE')).toBe('upper-case')
   })
 
-  describe('slug generation', () => {
-    it('lowercases the title', () => {
-      expect(generateFeatureFilename('UPPER CASE', 'name-date', D)).toBe('upper-case-2026-02-23')
-    })
-
-    it('replaces spaces with hyphens', () => {
-      expect(generateFeatureFilename('one two three', 'name-date', D)).toBe('one-two-three-2026-02-23')
-    })
-
-    it('strips special characters', () => {
-      expect(generateFeatureFilename('Hello! @World#', 'name-date', D)).toBe('hello-world-2026-02-23')
-    })
-
-    it('collapses multiple consecutive hyphens to one', () => {
-      expect(generateFeatureFilename('a  --  b', 'name-date', D)).toBe('a-b-2026-02-23')
-    })
-
-    it('trims leading and trailing hyphens from slug', () => {
-      expect(generateFeatureFilename('!leading and trailing!', 'name-date', D)).toBe('leading-and-trailing-2026-02-23')
-    })
-
-    it('truncates slug at 50 characters', () => {
-      const long = 'a'.repeat(60)
-      const result = generateFeatureFilename(long, 'name-date', D)
-      const slug = result.replace('-2026-02-23', '')
-      expect(slug.length).toBe(50)
-    })
-
-    it('falls back to "feature" for an empty title', () => {
-      expect(generateFeatureFilename('', 'name-date', D)).toBe('feature-2026-02-23')
-    })
-
-    it('falls back to "feature" when title contains only special chars', () => {
-      expect(generateFeatureFilename('!@#$%', 'name-date', D)).toBe('feature-2026-02-23')
-    })
-
-    it('preserves hyphens already in title', () => {
-      expect(generateFeatureFilename('my-existing-slug', 'name-date', D)).toBe('my-existing-slug-2026-02-23')
-    })
+  it('replaces spaces with hyphens', () => {
+    expect(generateFeatureSlug('one two three')).toBe('one-two-three')
   })
 
-  describe('date formatting', () => {
-    it('zero-pads single-digit months', () => {
-      const jan = new Date(2026, 0, 5)
-      expect(generateFeatureFilename('x', 'name-date', jan)).toBe('x-2026-01-05')
-    })
+  it('strips special characters', () => {
+    expect(generateFeatureSlug('Hello! @World#')).toBe('hello-world')
+  })
 
-    it('zero-pads single-digit days', () => {
-      const d9 = new Date(2026, 0, 9)
-      expect(generateFeatureFilename('x', 'name-date', d9)).toBe('x-2026-01-09')
-    })
+  it('collapses multiple consecutive hyphens to one', () => {
+    expect(generateFeatureSlug('a  --  b')).toBe('a-b')
+  })
 
-    it('zero-pads time components', () => {
-      const early = new Date(2026, 0, 1, 1, 2, 3)
-      expect(generateFeatureFilename('x', 'name-datetime', early)).toBe('x-2026-01-01-010203')
-    })
+  it('trims leading and trailing hyphens from slug', () => {
+    expect(generateFeatureSlug('!leading and trailing!')).toBe('leading-and-trailing')
+  })
+
+  it('limits the slug to 50 characters', () => {
+    const long = 'a'.repeat(60)
+    expect(generateFeatureSlug(long).length).toBe(50)
+  })
+
+  it('falls back to "feature" for an empty title', () => {
+    expect(generateFeatureSlug('')).toBe('feature')
+  })
+
+  it('falls back to "feature" when title contains only special chars', () => {
+    expect(generateFeatureSlug('!@#$%')).toBe('feature')
+  })
+
+  it('preserves hyphens already in title', () => {
+    expect(generateFeatureSlug('my-existing-slug')).toBe('my-existing-slug')
   })
 })
 
@@ -127,37 +81,5 @@ describe('getTitleFromContent', () => {
 
   it('returns "Untitled" for whitespace-only content', () => {
     expect(getTitleFromContent('   \n\n  ')).toBe('Untitled')
-  })
-})
-
-// ---------------------------------------------------------------------------
-// generateFeatureSlug
-// ---------------------------------------------------------------------------
-
-describe('generateFeatureSlug', () => {
-  it('slugifies a plain title', () => {
-    expect(generateFeatureSlug('Structure Costs')).toBe('structure-costs')
-  })
-
-  it('lowercases and strips special characters', () => {
-    expect(generateFeatureSlug('Hello! @World#')).toBe('hello-world')
-  })
-
-  it('collapses whitespace and hyphen runs to single hyphens', () => {
-    expect(generateFeatureSlug('a  --  b')).toBe('a-b')
-  })
-
-  it('trims hyphens from the start and end', () => {
-    expect(generateFeatureSlug('!leading and trailing!')).toBe('leading-and-trailing')
-  })
-
-  it('limits the slug to 50 characters', () => {
-    const long = 'a'.repeat(80)
-    expect(generateFeatureSlug(long)).toBe('a'.repeat(50))
-  })
-
-  it('falls back to "feature" when the title produces an empty slug', () => {
-    expect(generateFeatureSlug('')).toBe('feature')
-    expect(generateFeatureSlug('!@#$%')).toBe('feature')
   })
 })

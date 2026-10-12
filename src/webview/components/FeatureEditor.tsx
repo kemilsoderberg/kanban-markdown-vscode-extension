@@ -55,7 +55,8 @@ interface FeatureEditorProps {
   onClose: () => void
   onDelete: () => void
   onOpenFile: () => void
-  onStartWithAI: (agent: AIAgent, permissionMode: AIPermissionMode) => void
+  /** First argument is the issue id to dispatch, or null for the feature's spec. */
+  onStartWithAI: (issueId: string | null, agent: AIAgent, permissionMode: AIPermissionMode) => void
 }
 
 function getPriorityLabels(): Record<Priority, string> {
@@ -726,7 +727,8 @@ export function FeatureEditor({
       }
       if ((e.metaKey || e.ctrlKey) && e.key === 'b' && cardSettings.showBuildWithAI) {
         e.preventDefault()
-        onStartWithAI('claude', 'default')
+        const editingIssueId = isIssueMode && currentIssueFrontmatter ? currentIssueFrontmatter.id : null
+        onStartWithAI(editingIssueId, 'claude', 'default')
       }
       if (e.key === 'Escape') {
         // Flush any pending save before closing
@@ -746,7 +748,7 @@ export function FeatureEditor({
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [save, saveIssue, onClose, onStartWithAI, cardSettings.showBuildWithAI, isIssueMode])
+  }, [save, saveIssue, onClose, onStartWithAI, cardSettings.showBuildWithAI, isIssueMode, currentIssueFrontmatter])
 
   return (
     <div
@@ -819,7 +821,15 @@ export function FeatureEditor({
           )}
         </div>
         <div className="flex items-center gap-2">
-          {cardSettings.showBuildWithAI && <AIDropdown onSelect={onStartWithAI} />}
+          {cardSettings.showBuildWithAI && (
+            <AIDropdown
+              onSelect={(agent, mode) => onStartWithAI(
+                isIssueMode && currentIssueFrontmatter ? currentIssueFrontmatter.id : null,
+                agent,
+                mode
+              )}
+            />
+          )}
           <button
             onClick={onClose}
             className="p-1.5 rounded transition-colors vscode-hover-bg"
@@ -936,7 +946,7 @@ export function FeatureEditor({
               {issues.filter((i) => i.status === 'done').length}/{issues.length}
             </span>
           </div>
-          <MiniIssueBoard featureId={featureId} />
+          <MiniIssueBoard featureId={featureId} onStartWithAI={onStartWithAI} />
         </div>
       )}
 

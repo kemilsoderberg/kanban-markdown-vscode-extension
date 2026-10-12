@@ -27,7 +27,7 @@
 
 ---
 
-Features are stored as markdown files with YAML frontmatter — version-controllable, diffable, and editable outside the extension. No accounts, no external services.
+Each feature is a self-contained markdown directory — its spec plus its own issue subtasks — version-controllable, diffable, and editable outside the extension. No accounts, no external services.
 
 ## Quick Start
 
@@ -49,7 +49,7 @@ Features are stored as markdown files with YAML frontmatter — version-controll
 
 ### Cards
 
-Each card is a markdown file with YAML frontmatter.
+Each card is a feature directory containing `spec.md` with YAML frontmatter (see [File Format](#file-format)).
 
 <div align="center">
 <img src="https://raw.githubusercontent.com/LachyFS/kanban-markdown-vscode-extension/main/docs/images/board-overview.png" alt="Kanban Board Overview" width="800" />
@@ -100,11 +100,25 @@ Compatible with Claude Code, Codex, OpenCode, and [skills.sh](https://skills.sh)
 
 ## File Format
 
-Features live in `.devtool/features/` by default, organized into subfolders by status.
+Each feature lives in its own directory under `.devtool/features/` by default. The directory name is a slug of the feature's title (e.g. `implement-dark-mode-toggle/`) and never changes when the feature is renamed.
+
+```
+.devtool/features/
+└── implement-dark-mode-toggle/
+    ├── spec.md
+    └── issues/
+        ├── 001-pick-color-palette.md
+        ├── 002-add-toggle-to-settings.md
+        └── 003-write-tests.md
+```
+
+### spec.md
+
+`spec.md` is the feature's full record — the kanban card is rendered from it. All metadata lives in YAML frontmatter; the title comes from the first `#` heading, and the body below it is the feature's description.
 
 ```markdown
 ---
-id: "implement-dark-mode-toggle-2026-01-25"
+id: "implement-dark-mode-toggle"
 status: "todo"
 priority: "high"
 assignee: "john"
@@ -120,14 +134,36 @@ order: 0
 Add a toggle in settings to switch between light and dark themes...
 ```
 
+Feature status transitions are frontmatter edits only — files never move between folders, regardless of status.
+
+### issues/
+
+Each issue is a markdown file inside the feature's `issues/` directory. Issues are hand-creatable and hand-editable: create or edit a file in your editor and the board picks it up automatically. Membership is determined purely by which feature directory the file sits in.
+
+Files are named `NNN-<slug>.md` (e.g. `001-setup-db.md`) so they sort stably. Frontmatter is minimal — `id` (the filename base), `status`, `created`, and `modified`; the title is the first `#` heading:
+
+```markdown
+---
+id: "001-setup-db"
+status: "doing"
+created: "2026-01-26T09:00:00.000Z"
+modified: "2026-01-26T11:30:00.000Z"
+---
+
+# Set up the database
+```
+
+Issues have exactly three statuses — `todo`, `doing`, and `done` (unlike the five feature statuses). They appear on the feature card as a done-counter (e.g. `3/5`) with an expandable list, and in the feature detail view as a small todo/doing/done board with drag-and-drop. Issues never appear as cards on the main board.
+
+Both `spec.md` and individual issues support "Build with AI", passing the relevant file's context to your preferred agent.
+
 ## Configuration
 
 Settings live under `kanban-markdown.*` in your VS Code/Cursor preferences.
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `featuresDirectory` | `.devtool/features` | Directory for feature files (relative to workspace root) |
-| `filenamePattern` | `name-date` | Filename pattern for new cards (`name-date`, `date-name`, `name-datetime`, `datetime-name`) |
+| `featuresDirectory` | `.devtool/features` | Directory for feature directories (relative to workspace root) |
 | `defaultPriority` | `medium` | Default priority for new features |
 | `defaultStatus` | `backlog` | Default status for new features |
 | `columns` | *see below* | Customize column IDs, names, and colors |
@@ -153,6 +189,14 @@ Default columns:
   { "id": "done", "name": "Done", "color": "#22c55e" }
 ]
 ```
+
+## Migration from the flat layout
+
+Boards created before feature directories stored each feature as a single flat markdown file (with completed features in a `done/` subfolder). On first load, the extension detects this layout and, after a single confirmation dialog showing how many features will be converted, migrates everything automatically:
+
+- Each flat file becomes `<slug>/spec.md`, preserving all frontmatter and content exactly
+- Files from the `done/` subfolder become directories with `status: done` in frontmatter
+- The migration runs once; after it completes, all features live as sibling directories regardless of status
 
 ## Installation
 
