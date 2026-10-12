@@ -150,6 +150,7 @@ export type WebviewMessage =
   | { type: 'deleteLabel'; labelName: string }
   | { type: 'addIssue'; featureId: string; title: string }
   | { type: 'openIssue'; featureId: string; issueId: string }
+  | { type: 'moveIssue'; featureId: string; issueId: string; newStatus: IssueStatus }
   | { type: 'saveIssueContent'; featureId: string; issueId: string; content: string; frontmatter: IssueFrontmatter }
   | { type: 'deleteIssue'; featureId: string; issueId: string }
   | { type: 'closeIssue' }

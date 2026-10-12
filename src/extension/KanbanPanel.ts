@@ -3,7 +3,7 @@ import * as crypto from 'crypto'
 import * as path from 'path'
 import { generateKeyBetween, generateNKeysBetween } from 'fractional-indexing'
 import { getTitleFromContent, generateFeatureSlug } from '../shared/types'
-import type { Feature, FeatureStatus, Issue, IssueFrontmatter, Priority, KanbanColumn, FeatureFrontmatter, CardDisplaySettings, AIAgent, AIPermissionMode, BoardViewMode } from '../shared/types'
+import type { Feature, FeatureStatus, Issue, IssueStatus, IssueFrontmatter, Priority, KanbanColumn, FeatureFrontmatter, CardDisplaySettings, AIAgent, AIPermissionMode, BoardViewMode } from '../shared/types'
 import { getFeaturesDirectory, ensureFeaturesDirectory, listFeatureFiles, moveFeatureToDirectory, toWorkspaceRelativePath, getUniqueFeatureDirectory, ensureFeatureDirectory, migrateLegacyFeatureFiles, getIssueFilePath, listIssueFiles, getNextIssueNumber } from './featureFileUtils'
 import { parseFeatureFile, serializeFeature, parseIssueFile, serializeIssue } from '../shared/featureFrontmatter'
 import { featureMatchesEpicLane } from '../shared/epicLane'
@@ -212,6 +212,9 @@ export class KanbanPanel {
             break
           case 'openIssue':
             await this._sendIssueContent(message.featureId, message.issueId)
+            break
+          case 'moveIssue':
+            await this._moveIssue(message.featureId, message.issueId, message.newStatus)
             break
           case 'saveIssueContent':
             await this._saveIssueContent(message.featureId, message.issueId, message.content, message.frontmatter)
@@ -853,6 +856,21 @@ export class KanbanPanel {
     issue.status = frontmatter.status
     issue.modified = new Date().toISOString()
     issue.title = getTitleFromContent(content)
+
+    const fileContent = serializeIssue(issue)
+    this._lastWrittenContent = fileContent
+    await vscode.workspace.fs.writeFile(vscode.Uri.file(issue.filePath), new TextEncoder().encode(fileContent))
+
+    this._sendFeaturesToWebview()
+  }
+
+  private async _moveIssue(featureId: string, issueId: string, newStatus: IssueStatus): Promise<void> {
+    const feature = this._features.find(f => f.id === featureId)
+    const issue = feature?.issues?.find(i => i.id === issueId)
+    if (!feature || !issue) return
+
+    issue.status = newStatus
+    issue.modified = new Date().toISOString()
 
     const fileContent = serializeIssue(issue)
     this._lastWrittenContent = fileContent

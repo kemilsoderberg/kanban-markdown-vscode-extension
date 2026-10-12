@@ -130,7 +130,7 @@ describe('FeatureEditor — issue list', () => {
 
   it('has an add-issue input; submitting posts addIssue', () => {
     render(setup())
-    const input = screen.getByPlaceholderText(/add issue/i)
+    const input = screen.getAllByPlaceholderText(/add issue/i)[0]
     fireEvent.change(input, { target: { value: 'New subtask' } })
     fireEvent.keyDown(input, { key: 'Enter' })
     expect(mockPostMessage).toHaveBeenCalledWith({
@@ -161,6 +161,13 @@ describe('FeatureEditor — issue list', () => {
       featureId: 'my-feature',
       issueId: '002-b'
     })
+  })
+
+  it('renders the issues as a three-column mini-board (todo / doing / done)', () => {
+    render(setup())
+    expect(screen.getAllByText('To Do').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('Doing').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('Done').length).toBeGreaterThan(0)
   })
 })
 
