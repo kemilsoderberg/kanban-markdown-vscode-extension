@@ -1,8 +1,8 @@
 import * as vscode from 'vscode'
 import * as crypto from 'crypto'
-import * as path from 'path'
 import type { FeatureFrontmatter, EditorExtensionMessage, EditorWebviewMessage } from '../shared/editorTypes'
 import type { FeatureStatus, Priority, AIAgent } from '../shared/types'
+import { getFeaturesDirectory, isFeatureFilePath } from './featureFileUtils'
 
 /**
  * Provides a webview panel that shows feature metadata (frontmatter) as a header.
@@ -188,10 +188,9 @@ export class FeatureHeaderProvider implements vscode.WebviewViewProvider {
     // Only track .md files in the features directory (including status subfolders)
     const uri = editor.document.uri
     const config = vscode.workspace.getConfiguration('kanban-markdown')
-    const featuresDirectory = config.get<string>('featuresDirectory') || '.devtool/features'
-    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath
-    const fullFeaturesDir = workspaceRoot ? path.join(workspaceRoot, featuresDirectory) : featuresDirectory
-    if (uri.fsPath.endsWith('.md') && uri.fsPath.startsWith(fullFeaturesDir + path.sep)) {
+    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? null
+    const fullFeaturesDir = getFeaturesDirectory(workspaceRoot, config.get<string>('featuresDirectory'))
+    if (fullFeaturesDir && isFeatureFilePath(uri.fsPath, fullFeaturesDir)) {
       this._currentDocument = editor.document
       this._updateViewForCurrentEditor()
     } else {
