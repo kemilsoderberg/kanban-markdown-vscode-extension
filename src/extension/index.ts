@@ -6,7 +6,7 @@ import { SidebarViewProvider } from './SidebarViewProvider'
 import { generateFeatureFilename } from '../shared/types'
 import { serializeFeature } from '../shared/featureFrontmatter'
 import type { Feature, FeatureStatus, Priority } from '../shared/types'
-import { ensureStatusSubfolders, getFeatureFilePath } from './featureFileUtils'
+import { ensureFeaturesDirectory, getFeaturesDirectory, getUniqueFeatureFilePath } from './featureFileUtils'
 import { t, loadBundle } from './l10n'
 
 interface StatusQuickPickItem extends vscode.QuickPickItem {
@@ -68,10 +68,12 @@ async function createFeatureFromPrompts(): Promise<void> {
 
   // Create the feature file
   const config = vscode.workspace.getConfiguration('kanban-markdown')
-  const featuresDirectory = config.get<string>('featuresDirectory') || '.devtool/features'
-  const featuresDir = path.join(workspaceFolders[0].uri.fsPath, featuresDirectory)
-  await vscode.workspace.fs.createDirectory(vscode.Uri.file(featuresDir))
-  await ensureStatusSubfolders(featuresDir)
+  const featuresDir = getFeaturesDirectory(workspaceFolders[0].uri.fsPath, config.get<string>('featuresDirectory'))
+  if (!featuresDir) {
+    vscode.window.showErrorMessage(t('ext.noWorkspace'))
+    return
+  }
+  await ensureFeaturesDirectory(featuresDir)
 
   const filename = generateFeatureFilename(title)
   const now = new Date().toISOString()
@@ -79,8 +81,10 @@ async function createFeatureFromPrompts(): Promise<void> {
   // Build content with title as first # heading
   const content = `# ${title}${description ? '\n\n' + description : ''}`
 
+  const filePath = await getUniqueFeatureFilePath(featuresDir, status, filename)
+
   const feature: Feature = {
-    id: filename,
+    id: path.basename(filePath, '.md'),
     status,
     priority,
     assignee: null,
@@ -92,7 +96,7 @@ async function createFeatureFromPrompts(): Promise<void> {
     labels: [],
     order: generateKeyBetween(null, null),
     content,
-    filePath: getFeatureFilePath(featuresDir, status, filename)
+    filePath
   }
 
   const fileContent = serializeFeature(feature)
