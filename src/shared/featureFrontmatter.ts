@@ -1,6 +1,18 @@
 import * as path from 'path'
 import type { Feature, FeatureStatus, Priority } from './types'
 
+/**
+ * The feature id falls back to the filename base; for directory-layout
+ * features (a `<slug>/spec.md`) it falls back to the directory name.
+ */
+export function featureIdFromPath(filePath: string): string {
+  const base = path.basename(filePath, '.md')
+  if (base === 'spec') {
+    return path.basename(path.dirname(filePath))
+  }
+  return base
+}
+
 export function parseFeatureFile(content: string, filePath: string): Feature | null {
   content = content.replace(/\r\n/g, '\n')
   const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/)
@@ -22,8 +34,10 @@ export function parseFeatureFile(content: string, filePath: string): Feature | n
     return match[1].split(',').map(s => s.trim().replace(/^["']|["']$/g, '')).filter(Boolean)
   }
 
+  const id = getValue('id') || featureIdFromPath(filePath)
+
   return {
-    id: getValue('id') || path.basename(filePath, '.md'),
+    id,
     status: (getValue('status') as FeatureStatus) || 'backlog',
     priority: (getValue('priority') as Priority) || 'medium',
     assignee: getValue('assignee') || null,

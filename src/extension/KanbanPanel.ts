@@ -4,10 +4,11 @@ import * as path from 'path'
 import { generateKeyBetween, generateNKeysBetween } from 'fractional-indexing'
 import { getTitleFromContent, generateFeatureFilename } from '../shared/types'
 import type { Feature, FeatureStatus, Priority, KanbanColumn, FeatureFrontmatter, CardDisplaySettings, FilenamePattern, AIAgent, AIPermissionMode, BoardViewMode } from '../shared/types'
-import { moveFeatureFile, getFeatureFilePath, getStatusFromPath, fileExists, getFeaturesDirectory, ensureFeaturesDirectory, listFeatureFiles, getUniqueFeatureFilePath, moveFeatureToDirectory, listStatusSubfolderFiles, removeStatusSubfolderIfEmpty, toWorkspaceRelativePath } from './featureFileUtils'
+import { moveFeatureFile, getFeatureFilePath, getStatusFromPath, fileExists, getFeaturesDirectory, ensureFeaturesDirectory, listFeatureFiles, moveFeatureToDirectory, listStatusSubfolderFiles, removeStatusSubfolderIfEmpty, toWorkspaceRelativePath, getUniqueFeatureDirectory, ensureFeatureDirectory } from './featureFileUtils'
 import { parseFeatureFile, serializeFeature } from '../shared/featureFrontmatter'
 import { featureMatchesEpicLane } from '../shared/epicLane'
 import { t, getBundle, getEffectiveLocale, reloadBundle, getAllDefaultColumnNames, getDefaultColumnNamesForLocale } from './l10n'
+import { generateFeatureSlug } from '../shared/types'
 
 function normalizeEpic(value: string | null | undefined): string | null {
   const t = value?.trim()
@@ -514,8 +515,6 @@ export class KanbanPanel {
 
     const title = getTitleFromContent(data.content)
     const config = vscode.workspace.getConfiguration('kanban-markdown')
-    const pattern = config.get<FilenamePattern>('filenamePattern', 'name-date')
-    const filename = generateFeatureFilename(title, pattern)
     const now = new Date().toISOString()
     const addNewCardsToTop = config.get<boolean>('addNewCardsToTop', false)
     const featuresInStatus = this._features
@@ -525,10 +524,14 @@ export class KanbanPanel {
       ? generateKeyBetween(null, featuresInStatus.length > 0 ? featuresInStatus[0].order : null)
       : generateKeyBetween(featuresInStatus.length > 0 ? featuresInStatus[featuresInStatus.length - 1].order : null, null)
 
-    const filePath = await getUniqueFeatureFilePath(featuresDir, data.status, filename)
+    const slug = generateFeatureSlug(title)
+    const dirName = await getUniqueFeatureDirectory(featuresDir, slug)
+    const featureDir = path.join(featuresDir, dirName)
 
+    // spec.md stub: frontmatter + title heading + empty body. The stored
+    // content is the title heading so the card shows the right title.
     const feature: Feature = {
-      id: path.basename(filePath, '.md'),
+      id: dirName,
       status: data.status,
       priority: data.priority,
       assignee: data.assignee,
@@ -540,11 +543,11 @@ export class KanbanPanel {
       labels: data.labels,
       order: newOrder,
       content: data.content,
-      filePath
+      filePath: path.join(featureDir, 'spec.md')
     }
 
-    await vscode.workspace.fs.createDirectory(vscode.Uri.file(path.dirname(feature.filePath)))
     const content = this._serializeFeature(feature)
+    await ensureFeatureDirectory(featureDir)
     await vscode.workspace.fs.writeFile(vscode.Uri.file(feature.filePath), new TextEncoder().encode(content))
 
     this._features.push(feature)
@@ -705,7 +708,12 @@ export class KanbanPanel {
     if (!feature) return
 
     try {
-      await vscode.workspace.fs.delete(vscode.Uri.file(feature.filePath))
+      if (path.basename(feature.filePath) === 'spec.md') {
+        // Directory feature: delete the whole feature directory tree.
+        await vscode.workspace.fs.delete(vscode.Uri.file(path.dirname(feature.filePath)), { recursive: true })
+      } else {
+        await vscode.workspace.fs.delete(vscode.Uri.file(feature.filePath))
+      }
       this._features = this._features.filter(f => f.id !== featureId)
       this._sendFeaturesToWebview()
     } catch (err) {
@@ -1037,6 +1045,9 @@ export class KanbanPanel {
     this._migrating = true
     try {
       for (const feature of this._features) {
+        // Directory features are immutable: the directory name never changes.
+        if (path.basename(feature.filePath) === 'spec.md') continue
+
         const title = getTitleFromContent(feature.content)
         const createdDate = new Date(feature.created)
         const newFilename = generateFeatureFilename(title, pattern, createdDate)

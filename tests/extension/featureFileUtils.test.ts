@@ -26,7 +26,9 @@ import {
   moveFeatureToDirectory,
   listStatusSubfolderFiles,
   toWorkspaceRelativePath,
-  removeStatusSubfolderIfEmpty
+  removeStatusSubfolderIfEmpty,
+  getUniqueFeatureDirectory,
+  ensureFeatureDirectory
 } from '../../src/extension/featureFileUtils'
 
 // ---------------------------------------------------------------------------
@@ -192,6 +194,80 @@ describe('moveFeatureFile', () => {
     expect(from.fsPath).toBe(currentPath)
     expect(to.fsPath).toBe(path.join(FEATURES_DIR, 'done', 'my-feature.md'))
   })
+
+  it('is a no-op for a spec.md inside a feature directory regardless of status', async () => {
+    const specPath = path.join(FEATURES_DIR, 'my-feature', 'spec.md')
+    for (const status of ['backlog', 'todo', 'in-progress', 'review', 'done']) {
+      const fs = makeFs()
+      const result = await moveFeatureFile(specPath, FEATURES_DIR, status, fs)
+      expect(result).toBe(specPath)
+      expect(fs.rename).not.toHaveBeenCalled()
+      expect(fs.createDirectory).not.toHaveBeenCalled()
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// getUniqueFeatureDirectory
+// ---------------------------------------------------------------------------
+
+describe('getUniqueFeatureDirectory', () => {
+  it('returns the slug-only directory name when no feature directory exists', async () => {
+    const fs = makeFs()
+    expect(await getUniqueFeatureDirectory(FEATURES_DIR, 'structure-costs', fs)).toBe('structure-costs')
+  })
+
+  it('appends -2 when the plain slug directory is taken', async () => {
+    const fs = makeFs(new Set([path.join(FEATURES_DIR, 'structure-costs')]))
+    expect(await getUniqueFeatureDirectory(FEATURES_DIR, 'structure-costs', fs)).toBe('structure-costs-2')
+  })
+
+  it('increments -2, -3, … without overwriting existing directories', async () => {
+    const fs = makeFs(new Set([
+      path.join(FEATURES_DIR, 'structure-costs'),
+      path.join(FEATURES_DIR, 'structure-costs-2')
+    ]))
+    expect(await getUniqueFeatureDirectory(FEATURES_DIR, 'structure-costs', fs)).toBe('structure-costs-3')
+  })
+
+  it('counts a flat .md file with the same base as a collision', async () => {
+    const fs = makeFs(new Set([path.join(FEATURES_DIR, 'structure-costs.md')]))
+    expect(await getUniqueFeatureDirectory(FEATURES_DIR, 'structure-costs', fs)).toBe('structure-costs-2')
+  })
+
+  it('does not collide with a differently-named directory', async () => {
+    const fs = makeFs(new Set([path.join(FEATURES_DIR, 'other-feature')]))
+    expect(await getUniqueFeatureDirectory(FEATURES_DIR, 'structure-costs', fs)).toBe('structure-costs')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// ensureFeatureDirectory
+// ---------------------------------------------------------------------------
+
+describe('ensureFeatureDirectory', () => {
+  it('creates the feature directory and the issues/ subdirectory', async () => {
+    const fs = makeFs()
+    await ensureFeatureDirectory(path.join(FEATURES_DIR, 'structure-costs'), fs)
+    const calls = (fs.createDirectory as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0].fsPath)
+    expect(calls).toContain(path.join(FEATURES_DIR, 'structure-costs'))
+    expect(calls).toContain(path.join(FEATURES_DIR, 'structure-costs', 'issues'))
+  })
+
+  it('creates the feature directory before its issues/ subdirectory', async () => {
+    const fs = makeFs()
+    await ensureFeatureDirectory(path.join(FEATURES_DIR, 'structure-costs'), fs)
+    const calls = (fs.createDirectory as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0].fsPath)
+    expect(calls.indexOf(path.join(FEATURES_DIR, 'structure-costs'))).toBeLessThan(
+      calls.indexOf(path.join(FEATURES_DIR, 'structure-costs', 'issues'))
+    )
+  })
+
+  it('makes no rename calls', async () => {
+    const fs = makeFs()
+    await ensureFeatureDirectory(path.join(FEATURES_DIR, 'structure-costs'), fs)
+    expect(fs.rename).not.toHaveBeenCalled()
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -245,6 +321,26 @@ describe('isFeatureFilePath', () => {
   it('rejects the features directory itself', () => {
     expect(isFeatureFilePath(FEATURES_DIR, FEATURES_DIR)).toBe(false)
   })
+
+  it('accepts spec.md inside a feature directory', () => {
+    const filePath = path.join(FEATURES_DIR, 'my-feature', 'spec.md')
+    expect(isFeatureFilePath(filePath, FEATURES_DIR)).toBe(true)
+  })
+
+  it('accepts done/spec.md inside a feature directory in done/', () => {
+    const filePath = path.join(FEATURES_DIR, 'done', 'my-feature', 'spec.md')
+    expect(isFeatureFilePath(filePath, FEATURES_DIR)).toBe(true)
+  })
+
+  it('rejects issue files inside a feature directory', () => {
+    const filePath = path.join(FEATURES_DIR, 'my-feature', 'issues', '001-setup.md')
+    expect(isFeatureFilePath(filePath, FEATURES_DIR)).toBe(false)
+  })
+
+  it('rejects other files inside a feature directory', () => {
+    const filePath = path.join(FEATURES_DIR, 'my-feature', 'notes.md')
+    expect(isFeatureFilePath(filePath, FEATURES_DIR)).toBe(false)
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -280,7 +376,7 @@ describe('listFeatureFiles', () => {
 
   it('lists root-level .md files and done/ subfolder .md files', async () => {
     const fs = {
-      stat: vi.fn(),
+      stat: vi.fn(async (_uri: { fsPath: string }) => { throw new Error('ENOENT') }),
       rename: vi.fn(),
       createDirectory: vi.fn(),
       readDirectory: vi.fn(async (uri: { fsPath: string }) => {
@@ -310,7 +406,114 @@ describe('listFeatureFiles', () => {
     const files = await listFeatureFiles(FEATURES_DIR, fs as unknown as FsAdapter & { readDirectory: (uri: unknown) => Promise<[string, number][]> })
     expect(files).toEqual([])
   })
+  it('lists spec.md from feature directories alongside flat .md files', async () => {
+    const fs = {
+      stat: vi.fn(async (uri: { fsPath: string }) => {
+        if (uri.fsPath === path.join(FEATURES_DIR, 'dir-feature', 'spec.md')) return {}
+        throw new Error('ENOENT')
+      }),
+      rename: vi.fn(),
+      createDirectory: vi.fn(),
+      readDirectory: vi.fn(async (uri: { fsPath: string }) => {
+        if (uri.fsPath === FEATURES_DIR) {
+          return [['flat-feature.md', md.type], ['dir-feature', dir.type], ['done', dir.type], ['notes.txt', md.type]]
+        }
+        if (uri.fsPath === path.join(FEATURES_DIR, 'dir-feature')) {
+          return [['spec.md', md.type], ['issues', dir.type]]
+        }
+        if (uri.fsPath === path.join(FEATURES_DIR, 'done')) {
+          return [['finished.md', md.type]]
+        }
+        throw new Error('ENOENT')
+      })
+    }
+    const files = await listFeatureFiles(FEATURES_DIR, fs as unknown as FsAdapter & { readDirectory: (uri: unknown) => Promise<[string, number][]> })
+    expect(files).toEqual([
+      path.join(FEATURES_DIR, 'flat-feature.md'),
+      path.join(FEATURES_DIR, 'dir-feature', 'spec.md'),
+      path.join(FEATURES_DIR, 'done', 'finished.md')
+    ])
+  })
+
+  it('skips directories without a spec.md (malformed)', async () => {
+    const fs = {
+      stat: vi.fn(async (uri: { fsPath: string }) => {
+        if (uri.fsPath === path.join(FEATURES_DIR, 'real-feature', 'spec.md')) return {}
+        throw new Error('ENOENT')
+      }),
+      rename: vi.fn(),
+      createDirectory: vi.fn(),
+      readDirectory: vi.fn(async (uri: { fsPath: string }) => {
+        if (uri.fsPath === FEATURES_DIR) {
+          return [['empty-dir', dir.type], ['real-feature', dir.type]]
+        }
+        if (uri.fsPath === path.join(FEATURES_DIR, 'real-feature')) {
+          return [['spec.md', md.type]]
+        }
+        throw new Error('ENOENT')
+      })
+    }
+    const files = await listFeatureFiles(FEATURES_DIR, fs as unknown as FsAdapter & { readDirectory: (uri: unknown) => Promise<[string, number][]> })
+    expect(files).toEqual([path.join(FEATURES_DIR, 'real-feature', 'spec.md')])
+  })
+
+  it('skips the done/ and archived/ subfolders when scanning for feature directories', async () => {
+    const fs = {
+      stat: vi.fn(async (uri: { fsPath: string }) => {
+        if (uri.fsPath === path.join(FEATURES_DIR, 'real-feature', 'spec.md')) return {}
+        throw new Error('ENOENT')
+      }),
+      rename: vi.fn(),
+      createDirectory: vi.fn(),
+      readDirectory: vi.fn(async (uri: { fsPath: string }) => {
+        if (uri.fsPath === FEATURES_DIR) {
+          return [['done', dir.type], ['archived', dir.type], ['real-feature', dir.type]]
+        }
+        if (uri.fsPath === path.join(FEATURES_DIR, 'real-feature')) {
+          return [['spec.md', md.type]]
+        }
+        if (uri.fsPath === path.join(FEATURES_DIR, 'done')) {
+          return [['finished.md', md.type]]
+        }
+        if (uri.fsPath === path.join(FEATURES_DIR, 'archived')) {
+          return [['old-feature.md', md.type]]
+        }
+        throw new Error('ENOENT')
+      })
+    }
+    const files = await listFeatureFiles(FEATURES_DIR, fs as unknown as FsAdapter & { readDirectory: (uri: unknown) => Promise<[string, number][]> })
+    expect(files).toEqual([
+      path.join(FEATURES_DIR, 'real-feature', 'spec.md'),
+      path.join(FEATURES_DIR, 'done', 'finished.md')
+    ])
+  })
+
+  it('does not include issue files from a feature directory', async () => {
+    const fs = {
+      stat: vi.fn(async (uri: { fsPath: string }) => {
+        if (uri.fsPath === path.join(FEATURES_DIR, 'dir-feature', 'spec.md')) return {}
+        throw new Error('ENOENT')
+      }),
+      rename: vi.fn(),
+      createDirectory: vi.fn(),
+      readDirectory: vi.fn(async (uri: { fsPath: string }) => {
+        if (uri.fsPath === FEATURES_DIR) {
+          return [['dir-feature', dir.type]]
+        }
+        if (uri.fsPath === path.join(FEATURES_DIR, 'dir-feature')) {
+          return [['spec.md', md.type], ['issues', dir.type]]
+        }
+        if (uri.fsPath === path.join(FEATURES_DIR, 'dir-feature', 'issues')) {
+          return [['001-setup-db.md', md.type]]
+        }
+        throw new Error('ENOENT')
+      })
+    }
+    const files = await listFeatureFiles(FEATURES_DIR, fs as unknown as FsAdapter & { readDirectory: (uri: unknown) => Promise<[string, number][]> })
+    expect(files).toEqual([path.join(FEATURES_DIR, 'dir-feature', 'spec.md')])
+  })
 })
+
 
 // ---------------------------------------------------------------------------
 // getUniqueFeatureFilePath
@@ -375,6 +578,15 @@ describe('moveFeatureToDirectory', () => {
     const fs = makeFs(new Set([taken]))
     const result = await moveFeatureToDirectory(source, FEATURES_DIR, 'archived', fs)
     expect(result).toBe(path.join(FEATURES_DIR, 'archived', 'my-feature-1.md'))
+  })
+
+  it('is a no-op for a spec.md inside a feature directory', async () => {
+    const specPath = path.join(FEATURES_DIR, 'my-feature', 'spec.md')
+    const fs = makeFs()
+    const result = await moveFeatureToDirectory(specPath, FEATURES_DIR, 'archived', fs)
+    expect(result).toBe(specPath)
+    expect(fs.rename).not.toHaveBeenCalled()
+    expect(fs.createDirectory).not.toHaveBeenCalled()
   })
 })
 
@@ -442,8 +654,6 @@ describe('toWorkspaceRelativePath', () => {
 // ---------------------------------------------------------------------------
 
 describe('removeStatusSubfolderIfEmpty', () => {
-  const dir = { type: 2 }
-
   it('deletes the subfolder when reading it returns no entries', async () => {
     const fs = {
       stat: vi.fn(),
