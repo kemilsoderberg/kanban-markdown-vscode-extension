@@ -592,8 +592,28 @@ export class KanbanPanel {
     const after = clampedOrder < targetColumnFeatures.length ? targetColumnFeatures[clampedOrder].order : null
     feature.order = generateKeyBetween(before, after)
 
-    // Only the moved feature needs to be written
+    // Only the moved feature needs to be written. A directory feature
+    // crossing the done boundary also relocates: its whole feature
+    // directory moves into done/<slug>/ (entering done) or back to the
+    // features root (leaving done).
+    await this._relocateAcrossDoneBoundary(feature, oldStatus, newStatus)
     await this._writeFeatureAndPush(feature)
+  }
+
+  /** Relocates a directory feature across the done/ subfolder boundary. */
+  private async _relocateAcrossDoneBoundary(feature: Feature, oldStatus: string, newStatus: string): Promise<void> {
+    if (oldStatus === newStatus) return
+    const enteringDone = newStatus === 'done' && oldStatus !== 'done'
+    const leavingDone = oldStatus === 'done' && newStatus !== 'done'
+    if (!enteringDone && !leavingDone) return
+
+    if (!isDirectoryFeaturePath(feature.filePath)) return
+    const featuresDir = this._getWorkspaceFeaturesDir()
+    if (!featuresDir) return
+
+    const newPath = await moveFeatureToDirectory(feature.filePath, featuresDir, enteringDone ? 'done' : '.')
+    feature.filePath = newPath
+    feature.id = path.basename(path.dirname(newPath))
   }
 
   private async _moveAllCards(
@@ -619,11 +639,13 @@ export class KanbanPanel {
     try {
       for (let i = 0; i < sourceFeatures.length; i++) {
         const feature = sourceFeatures[i]
+        const oldStatus = feature.status
         feature.status = newStatus
         feature.modified = new Date().toISOString()
         feature.completedAt = newStatus === 'done' ? new Date().toISOString() : null
         feature.order = newKeys[i]
 
+        await this._relocateAcrossDoneBoundary(feature, oldStatus, newStatus)
         await this._writeFeature(feature)
       }
     } finally {

@@ -563,7 +563,7 @@ describe('migrateLegacyFeatureFiles', () => {
     expect(dirs.has(path.join(FEATURES_DIR, 'my-feature', 'issues'))).toBe(true)
   })
 
-  it('migrates a done/ file into a directory with status: done and removes the empty done/ folder', async () => {
+  it('migrates a done/ file into done/<slug>/ with status: done, keeping the done/ folder', async () => {
     const content = [
       '---',
       'id: "finished-2026-01-01"',
@@ -581,7 +581,7 @@ describe('migrateLegacyFeatureFiles', () => {
     const result = await migrateLegacyFeatureFiles(FEATURES_DIR, fs as never)
 
     expect(result.migrated).toBe(1)
-    const specPath = path.join(FEATURES_DIR, 'finished', 'spec.md')
+    const specPath = path.join(FEATURES_DIR, 'done', 'finished', 'spec.md')
     const migrated = files.get(specPath) || ''
     expect(migrated).toContain('status: "done"')
     // every other frontmatter value is preserved exactly
@@ -591,7 +591,8 @@ describe('migrateLegacyFeatureFiles', () => {
     expect(migrated).toContain('order: "a1"')
     expect(migrated).toContain('# Finished')
     expect(files.has(path.join(FEATURES_DIR, 'done', 'finished-2026-01-01.md'))).toBe(false)
-    expect(dirs.has(path.join(FEATURES_DIR, 'done'))).toBe(false)
+    // done/ stays as the home of done features; done/<slug>/issues/ exists
+    expect(dirs.has(path.join(FEATURES_DIR, 'done', 'finished', 'issues'))).toBe(true)
   })
 
   it('skips files whose frontmatter cannot be parsed', async () => {
@@ -841,5 +842,69 @@ describe('isDirectoryFeaturePath', () => {
     expect(isDirectoryFeaturePath(path.join(FEATURES_DIR, 'my-feature', 'spec.md'))).toBe(true)
     expect(isDirectoryFeaturePath(path.join(FEATURES_DIR, 'my-feature.md'))).toBe(false)
     expect(isDirectoryFeaturePath(path.join(FEATURES_DIR, 'my-feature', 'issues', '001-a.md'))).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// done/ subfolder for directory features — Done features live in done/<slug>/
+// ---------------------------------------------------------------------------
+
+describe('listFeatureFiles with done/ directory features', () => {
+  it('lists done/<slug>/spec.md as a feature file', async () => {
+    const { fs } = makeMemFs(
+      {
+        [path.join(FEATURES_DIR, 'done', 'old-feature', 'spec.md')]: '---\nid: "old-feature"\nstatus: "done"\n---\n# Old\n'
+      },
+      [FEATURES_DIR, path.join(FEATURES_DIR, 'done', 'old-feature', 'issues')]
+    )
+    const files = await listFeatureFiles(FEATURES_DIR, fs as unknown as FsAdapter & { readDirectory: (uri: unknown) => Promise<[string, number][]> })
+    expect(files).toEqual([path.join(FEATURES_DIR, 'done', 'old-feature', 'spec.md')])
+  })
+
+  it('still skips legacy flat files inside done/', async () => {
+    const { fs } = makeMemFs(
+      {
+        [path.join(FEATURES_DIR, 'done', 'flat-done.md')]: '---\nid: "flat-done"\n---\n# Flat\n'
+      },
+      [FEATURES_DIR]
+    )
+    const files = await listFeatureFiles(FEATURES_DIR, fs as unknown as FsAdapter & { readDirectory: (uri: unknown) => Promise<[string, number][]> })
+    expect(files).toEqual([])
+  })
+})
+
+describe('isFeatureFilePath with done/ directory features', () => {
+  it('accepts done/<slug>/spec.md', () => {
+    const specPath = path.join(FEATURES_DIR, 'done', 'my-feature', 'spec.md')
+    expect(isFeatureFilePath(specPath, FEATURES_DIR)).toBe(true)
+  })
+
+  it('still rejects flat files in done/', () => {
+    const flatPath = path.join(FEATURES_DIR, 'done', 'my-feature.md')
+    expect(isFeatureFilePath(flatPath, FEATURES_DIR)).toBe(false)
+  })
+})
+
+describe('moving a directory feature in or out of done/', () => {
+  it('moveFeatureToDirectory target done moves the whole feature directory into done/', async () => {
+    const fs = makeFs(new Set([path.join(FEATURES_DIR, 'my-feature')]))
+    const currentPath = path.join(FEATURES_DIR, 'my-feature', 'spec.md')
+    const newPath = await moveFeatureToDirectory(currentPath, FEATURES_DIR, 'done', fs as unknown as FsAdapter)
+    expect(newPath).toBe(path.join(FEATURES_DIR, 'done', 'my-feature', 'spec.md'))
+    expect(fs.rename).toHaveBeenCalledWith(
+      expect.objectContaining({ fsPath: path.join(FEATURES_DIR, 'my-feature') }),
+      expect.objectContaining({ fsPath: path.join(FEATURES_DIR, 'done', 'my-feature') })
+    )
+  })
+
+  it('moveFeatureToDirectory target root moves the feature directory out of done/', async () => {
+    const fs = makeFs(new Set([path.join(FEATURES_DIR, 'done', 'my-feature')]))
+    const currentPath = path.join(FEATURES_DIR, 'done', 'my-feature', 'spec.md')
+    const newPath = await moveFeatureToDirectory(currentPath, FEATURES_DIR, '.', fs as unknown as FsAdapter)
+    expect(newPath).toBe(path.join(FEATURES_DIR, 'my-feature', 'spec.md'))
+    expect(fs.rename).toHaveBeenCalledWith(
+      expect.objectContaining({ fsPath: path.join(FEATURES_DIR, 'done', 'my-feature') }),
+      expect.objectContaining({ fsPath: path.join(FEATURES_DIR, 'my-feature') })
+    )
   })
 })

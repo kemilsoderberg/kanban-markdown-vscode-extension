@@ -64,6 +64,10 @@ export function isFeatureFilePath(filePath: string, featuresDir: string): boolea
   const relative = path.relative(featuresDir, filePath)
   if (relative === '' || relative.startsWith('..') || path.isAbsolute(relative)) return false
   const parts = relative.split(path.sep)
+  // <slug>/spec.md at the features root, or done/<slug>/spec.md for a
+  // feature kept in the done/ subfolder. Flat files (one path segment) are
+  // not feature files.
+  if (parts.length === 3 && parts[0] === 'done' && parts[2] === 'spec.md') return true
   return parts.length === 2 && parts[1] === 'spec.md'
 }
 
@@ -80,9 +84,12 @@ export async function ensureFeaturesDirectory(
 
 /**
  * Reads the layout: lists every existing feature file path, one
- * `<slug>/spec.md` per feature directory. Central decision: where features
- * are read from. Directories without a spec.md are malformed and skipped,
- * just like unparseable files.
+ * `<slug>/spec.md` per feature directory. Done features live in
+ * `done/<slug>/spec.md` and are listed as well — a feature's status may
+ * live in frontmatter, but the `done/` subfolder is where finished feature
+ * directories are kept. Central decision: where features are read from.
+ * Directories without a spec.md are malformed and skipped, just like
+ * unparseable files.
  */
 export async function listFeatureFiles(
   featuresDir: string,
@@ -92,7 +99,23 @@ export async function listFeatureFiles(
   try {
     const entries = await fs.readDirectory(vscode.Uri.file(featuresDir))
     for (const [name, type] of entries) {
-      if (type !== FILE_TYPE_DIRECTORY || name === 'done' || name === 'archived') {
+      if (type !== FILE_TYPE_DIRECTORY || name === 'archived') {
+        continue
+      }
+      if (name === 'done') {
+        // Done features live as directories inside the done/ subfolder.
+        try {
+          const doneEntries = await fs.readDirectory(vscode.Uri.file(path.join(featuresDir, name)))
+          for (const [doneName, doneType] of doneEntries) {
+            if (doneType !== FILE_TYPE_DIRECTORY) continue
+            const doneSpecPath = path.join(featuresDir, name, doneName, 'spec.md')
+            if (await fileExists(doneSpecPath, fs)) {
+              files.push(doneSpecPath)
+            }
+          }
+        } catch {
+          // done/ may not exist; nothing to list there
+        }
         continue
       }
       const specPath = path.join(featuresDir, name, 'spec.md')
@@ -373,12 +396,16 @@ export async function migrateLegacyFeatureFiles(
       await fs.delete(vscode.Uri.file(filePath))
       deleted = true
 
-      const dirName = await getUniqueFeatureDirectory(featuresDir, slug, fs)
-      const featureDir = path.join(featuresDir, dirName)
+      // Done features live inside the done/ subfolder; legacy flat files
+      // found there become done/<slug>/spec.md (with status: done).
+      const cameFromDone = path.dirname(filePath) === path.join(featuresDir, 'done')
+      const baseDir = cameFromDone ? path.join(featuresDir, 'done') : featuresDir
+      const dirName = await getUniqueFeatureDirectory(baseDir, slug, fs)
+      const featureDir = path.join(baseDir, dirName)
       await fs.createDirectory(vscode.Uri.file(path.join(featureDir, 'issues')))
 
       let specContent = content
-      if (path.dirname(filePath) === path.join(featuresDir, 'done') && feature.status !== 'done') {
+      if (cameFromDone && feature.status !== 'done') {
         feature.status = 'done'
         feature.filePath = filePath
         specContent = serializeFeature(feature)
@@ -399,8 +426,9 @@ export async function migrateLegacyFeatureFiles(
     }
   }
 
-  // Clean up legacy status folders that are now empty
-  const legacyFolders = ['done', 'backlog', 'todo', 'in-progress', 'review']
+  // Clean up legacy status folders that are now empty. done/ is not in
+  // this list: it stays as the home of done feature directories.
+  const legacyFolders = ['backlog', 'todo', 'in-progress', 'review']
   for (const folder of legacyFolders) {
     try {
       const entries = await fs.readDirectory(vscode.Uri.file(path.join(featuresDir, folder)))
