@@ -305,3 +305,61 @@ export async function moveFeatureToDirectory(
 
   return targetPath
 }
+
+/**
+ * Decides where an issue file lives: `<featureDir>/issues/<id>.md`.
+ * Central decision: the location of an issue file inside a feature.
+ */
+export function getIssueFilePath(featureDir: string, issueId: string): string {
+  return path.join(featureDir, 'issues', `${issueId}.md`)
+}
+
+/**
+ * Lists every `.md` file in a feature's `issues/` directory, ordered
+ * alphabetically by filename. Central decision: which files are issues.
+ * Membership is by location only. Returns an empty list when the
+ * issues/ directory does not exist.
+ */
+export async function listIssueFiles(
+  featureDir: string,
+  fs: FsAdapter & { readDirectory(uri: vscode.Uri): Thenable<[string, number][]> } = vscode.workspace.fs as FsAdapter & { readDirectory(uri: vscode.Uri): Thenable<[string, number][]> }
+): Promise<string[]> {
+  const issuesDir = path.join(featureDir, 'issues')
+  try {
+    const entries = await fs.readDirectory(vscode.Uri.file(issuesDir))
+    return entries
+      .filter(([name, type]) => type === FILE_TYPE_FILE && name.endsWith('.md'))
+      .map(([name]) => path.join(issuesDir, name))
+      .sort()
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Finds the next free zero-padded issue counter in a feature's `issues/`
+ * directory by scanning every existing filename for its leading number.
+ * Hand-created files with any numeric prefix count, so numbering never
+ * collides. Central decision: what number a new issue gets.
+ */
+export async function getNextIssueNumber(
+  featureDir: string,
+  fs: FsAdapter & { readDirectory(uri: vscode.Uri): Thenable<[string, number][]> } = vscode.workspace.fs as FsAdapter & { readDirectory(uri: vscode.Uri): Thenable<[string, number][]> }
+): Promise<number> {
+  const issuesDir = path.join(featureDir, 'issues')
+  let max = 0
+  try {
+    const entries = await fs.readDirectory(vscode.Uri.file(issuesDir))
+    for (const [name, type] of entries) {
+      if (type !== FILE_TYPE_FILE || !name.endsWith('.md')) continue
+      const match = name.match(/^(\d+)-/)
+      if (match) {
+        const n = parseInt(match[1], 10)
+        if (n > max) max = n
+      }
+    }
+  } catch {
+    // issues/ directory doesn't exist yet — start at 1
+  }
+  return max + 1
+}

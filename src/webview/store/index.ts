@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { Feature, FeatureStatus, KanbanColumn, Priority, CardDisplaySettings, BoardViewMode } from '../../shared/types'
+import type { Feature, FeatureStatus, Issue, IssueStatus, KanbanColumn, Priority, CardDisplaySettings, BoardViewMode } from '../../shared/types'
 import { featureMatchesEpicLane } from '../../shared/epicLane'
 
 export type DueDateFilter = 'all' | 'overdue' | 'today' | 'this-week' | 'no-date'
@@ -43,6 +43,10 @@ interface KanbanState {
   addFeature: (feature: Feature) => void
   updateFeature: (id: string, updates: Partial<Feature>) => void
   removeFeature: (id: string) => void
+  addIssue: (featureId: string, issue: Issue) => void
+  updateIssue: (featureId: string, issueId: string, updates: Partial<Issue>) => void
+  removeIssue: (featureId: string, issueId: string) => void
+  getIssuesByStatus: (featureId: string, status: IssueStatus) => Issue[]
   getFeaturesByStatus: (status: FeatureStatus, epicLane?: string | null) => Feature[]
   getFilteredFeaturesByStatus: (status: FeatureStatus, epicLane?: string | null) => Feature[]
   getUniqueAssignees: () => string[]
@@ -173,6 +177,39 @@ export const useStore = create<KanbanState>((set, get) => ({
     set((state) => ({
       features: state.features.filter((f) => f.id !== id)
     })),
+
+  addIssue: (featureId, issue) =>
+    set((state) => ({
+      features: state.features.map((f) =>
+        f.id === featureId ? { ...f, issues: [...(f.issues ?? []), issue] } : f
+      )
+    })),
+
+  updateIssue: (featureId, issueId, updates) =>
+    set((state) => ({
+      features: state.features.map((f) =>
+        f.id === featureId
+          ? { ...f, issues: f.issues?.map((i) => (i.id === issueId ? { ...i, ...updates } : i)) }
+          : f
+      )
+    })),
+
+  removeIssue: (featureId, issueId) =>
+    set((state) => ({
+      features: state.features.map((f) =>
+        f.id === featureId
+          ? { ...f, issues: f.issues?.filter((i) => i.id !== issueId) }
+          : f
+      )
+    })),
+
+  getIssuesByStatus: (featureId, status) => {
+    const { features } = get()
+    const feature = features.find((f) => f.id === featureId)
+    return (feature?.issues ?? [])
+      .filter((i) => i.status === status)
+      .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+  },
 
   getFeaturesByStatus: (status, epicLane) => {
     const { features } = get()

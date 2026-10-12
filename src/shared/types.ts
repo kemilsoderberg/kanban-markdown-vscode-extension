@@ -2,6 +2,17 @@
 
 export type Priority = 'critical' | 'high' | 'medium' | 'low'
 export type FeatureStatus = 'backlog' | 'todo' | 'in-progress' | 'review' | 'done'
+export type IssueStatus = 'todo' | 'doing' | 'done'
+
+export interface Issue {
+  id: string
+  status: IssueStatus
+  created: string
+  modified: string
+  title: string
+  content: string
+  filePath: string
+}
 
 // AI agent types
 export type AIAgent = 'claude' | 'codex' | 'opencode' | 'copilot'
@@ -21,6 +32,8 @@ export interface Feature {
   order: string
   content: string
   filePath: string
+  /** Issues linked by location (`<featureDir>/issues/`). Populated by the extension. */
+  issues?: Issue[]
 }
 
 // Parse title from the first # heading in markdown content, falling back to the first line
@@ -111,6 +124,8 @@ export type ExtensionMessage =
   | { type: 'featuresUpdated'; features: Feature[] }
   | { type: 'triggerCreateDialog' }
   | { type: 'featureContent'; featureId: string; content: string; frontmatter: FeatureFrontmatter }
+  | { type: 'issueContent'; issueId: string; featureId: string; content: string; frontmatter: IssueFrontmatter }
+  | { type: 'issuesUpdated'; featureId: string; issues: Issue[] }
 
 // Frontmatter for editing
 export interface FeatureFrontmatter {
@@ -125,6 +140,14 @@ export interface FeatureFrontmatter {
   completedAt: string | null
   labels: string[]
   order: string
+}
+
+// Minimal frontmatter for editing issues
+export interface IssueFrontmatter {
+  id: string
+  status: IssueStatus
+  created: string
+  modified: string
 }
 
 export type WebviewMessage =
@@ -145,3 +168,8 @@ export type WebviewMessage =
   | { type: 'archiveAllCards'; sourceColumnId: string }
   | { type: 'renameLabel'; oldName: string; newName: string }
   | { type: 'deleteLabel'; labelName: string }
+  | { type: 'addIssue'; featureId: string; title: string }
+  | { type: 'openIssue'; featureId: string; issueId: string }
+  | { type: 'saveIssueContent'; featureId: string; issueId: string; content: string; frontmatter: IssueFrontmatter }
+  | { type: 'deleteIssue'; featureId: string; issueId: string }
+  | { type: 'closeIssue' }

@@ -4,31 +4,27 @@
   "status.inProgress": "En progreso",
   "status.review": "En revisión",
   "status.done": "Hecho",
-
   "status.backlog.description": "Aún no planificado",
   "status.todo.description": "Planificado para desarrollo",
   "status.inProgress.description": "Actualmente en desarrollo",
   "status.review.description": "Listo para revisión",
   "status.done.description": "Completado",
-
+  "issue.status.doing": "En progreso",
   "priority.critical": "Crítica",
   "priority.high": "Alta",
   "priority.medium": "Media",
   "priority.low": "Baja",
   "priority.mediumShort": "Med",
-
   "priority.critical.description": "Urgente, necesita atención inmediata",
   "priority.high.description": "Importante, debe hacerse pronto",
   "priority.medium.description": "Prioridad normal",
   "priority.low.description": "Deseable, puede esperar",
-
   "property.status": "Estado",
   "property.priority": "Prioridad",
   "property.assignee": "Asignado",
   "property.dueDate": "Fecha límite",
   "property.labels": "Etiquetas",
   "property.epic": "Épica",
-
   "editor.buildWithAI": "Construir con IA",
   "editor.delete": "ELIMINAR",
   "editor.open": "ABRIR",
@@ -38,16 +34,17 @@
   "editor.openMdFile": "Abrir archivo .md",
   "editor.deleteTicket": "Eliminar ticket",
   "editor.startWriting": "Empieza a escribir...",
+  "editor.addIssue": "Añadir incidencia...",
+  "editor.deleteIssue": "Eliminar incidencia",
+  "editor.issues": "Incidencias",
   "editor.addLabels": "Añadir etiquetas...",
   "editor.noAssignee": "Sin asignar",
   "editor.noEpic": "Sin épica",
-
   "create.title": "Crear función",
   "create.featureTitle": "Título de la función...",
   "create.addDescription": "Añadir una descripción...",
   "create.autoSaves": "Se guarda automáticamente al cerrar",
   "create.saveAndClose": "para guardar y cerrar",
-
   "toolbar.search": "Buscar funciones...",
   "toolbar.allPriorities": "Todas las prioridades",
   "toolbar.allAssignees": "Todos los asignados",
@@ -69,7 +66,6 @@
   "toolbar.manageLabels": "Gestionar etiquetas",
   "toolbar.openSettings": "Abrir ajustes",
   "toolbar.pressKeyToAdd": "Pulsa {key} para añadir",
-
   "date.day.mo": "Lu",
   "date.day.tu": "Ma",
   "date.day.we": "Mi",
@@ -91,11 +87,12 @@
   "date.month.december": "Diciembre",
   "date.dueDate": "Fecha límite",
   "date.today": "Hoy",
-
   "card.overdue": "Vencido",
   "card.today": "Hoy",
   "card.tomorrow": "Mañana",
   "card.daysShort": "{days}d",
+  "card.issues.add": "Añadir incidencia...",
+  "card.issues.toggle": "Mostrar incidencias",
   "card.justNow": "Ahora",
   "card.minutesAgo": "hace {count}m",
   "card.hoursAgo": "hace {count}h",
@@ -103,17 +100,14 @@
   "card.daysAgo": "hace {count}d",
   "card.monthsAgo": "hace {count}me",
   "card.yearsAgo": "hace {count}a",
-
   "column.collapse": "Colapsar {name}",
   "column.addTo": "Añadir a {name}",
   "column.options": "Opciones de columna",
   "column.moveAllCards": "Mover todas las tarjetas de esta lista",
   "column.archiveAllCards": "Archivar todas las tarjetas de esta lista",
   "column.noFeatures": "Sin funciones",
-
   "epic.noEpic": "Sin épica",
   "epic.emptyHint": "Asigna una épica a una tarjeta para ver carriles aquí.",
-
   "labels.manage": "Gestionar etiquetas",
   "labels.confirmRename": "Confirmar renombrado",
   "labels.cancel": "Cancelar",
@@ -121,15 +115,11 @@
   "labels.usedOnMany": "Usada en {count} tarjetas",
   "labels.renameLabel": "Renombrar etiqueta",
   "labels.deleteLabel": "Eliminar etiqueta",
-
   "quickAdd.addFeature": "Añadir función",
   "quickAdd.featureTitle": "Título de la función...",
-
   "undo.undo": "Deshacer",
-
   "app.loading": "Cargando...",
   "app.deleted": "Eliminado \"{title}\"",
-
   "ai.claude": "Claude",
   "ai.codex": "Codex",
   "ai.copilot": "Copilot",
@@ -148,7 +138,6 @@
   "ai.mode.codex.fullAuto.description": "Automatización total",
   "ai.mode.copilot.default.description": "Modo estándar",
   "ai.mode.opencode.default.description": "Modo estándar",
-
   "ext.noWorkspace": "No hay carpeta de trabajo abierta",
   "ext.featureTitle": "Título de la función",
   "ext.featureTitlePlaceholder": "Introduce un título para la nueva función",
@@ -157,7 +146,6 @@
   "ext.descriptionOptional": "Descripción (opcional)",
   "ext.descriptionPlaceholder": "Introduce una descripción para la función",
   "ext.createdFeature": "Función creada: {title}",
-
   "panel.title": "Tablero Kanban",
   "panel.noWorkspace": "No hay carpeta de trabajo abierta",
   "panel.deleteFailed": "Error al eliminar la función: {error}",
@@ -179,7 +167,6 @@
   "panel.languageChanged": "Kanban Markdown: idioma cambiado. ¿Actualizar los nombres de las columnas?",
   "panel.updateColumns": "Actualizar columnas",
   "panel.keepColumns": "Mantener actuales",
-
   "sidebar.openBoard": "Abrir tablero",
   "sidebar.newFeature": "Nueva función",
   "sidebar.overview": "Resumen",

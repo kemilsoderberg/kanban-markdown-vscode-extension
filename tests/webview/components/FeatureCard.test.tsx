@@ -1,9 +1,18 @@
 // @vitest-environment jsdom
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { FeatureCard } from '../../../src/webview/components/FeatureCard'
 import { useStore } from '../../../src/webview/store'
 import type { Feature, CardDisplaySettings } from '../../../src/shared/types'
+
+// ---------------------------------------------------------------------------
+// vscode bridge mock
+// ---------------------------------------------------------------------------
+
+const { mockPostMessage } = vi.hoisted(() => ({ mockPostMessage: vi.fn() }))
+vi.mock('../../../src/webview/vscodeApi', () => ({
+  vscode: { postMessage: mockPostMessage }
+}))
 
 // ---------------------------------------------------------------------------
 // Store reset
@@ -13,6 +22,7 @@ const initialState = useStore.getState()
 
 beforeEach(() => {
   useStore.setState(initialState, true)
+  mockPostMessage.mockClear()
 })
 
 // ---------------------------------------------------------------------------
