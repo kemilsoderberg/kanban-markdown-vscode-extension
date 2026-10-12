@@ -26,6 +26,7 @@
   "property.labels": "Etiquetas",
   "property.epic": "Épico",
   "editor.buildWithAI": "Construir com IA",
+  "editor.buildIssueWithAI": "Construir esta tarefa com IA",
   "editor.delete": "ELIMINAR",
   "editor.open": "ABRIR",
   "editor.deleteConfirm": "Eliminar?",

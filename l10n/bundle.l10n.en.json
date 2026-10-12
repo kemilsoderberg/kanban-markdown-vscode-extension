@@ -26,6 +26,7 @@
   "property.labels": "Labels",
   "property.epic": "Epic",
   "editor.buildWithAI": "Build with AI",
+  "editor.buildIssueWithAI": "Build this issue with AI",
   "editor.delete": "DELETE",
   "editor.open": "OPEN",
   "editor.deleteConfirm": "Delete?",

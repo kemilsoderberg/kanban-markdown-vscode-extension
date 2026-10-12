@@ -8,6 +8,8 @@ import { moveFeatureFile, getFeatureFilePath, getStatusFromPath, fileExists, get
 import { parseFeatureFile, serializeFeature, parseIssueFile, serializeIssue } from '../shared/featureFrontmatter'
 import { featureMatchesEpicLane } from '../shared/epicLane'
 import { t, getBundle, getEffectiveLocale, reloadBundle, getAllDefaultColumnNames, getDefaultColumnNamesForLocale } from './l10n'
+import { buildFeaturePrompt, buildIssuePrompt } from '../shared/aiPrompt'
+import { buildAgentCommand, shellQuote, AGENT_NAMES } from '../shared/aiCommand'
 
 function normalizeEpic(value: string | null | undefined): string | null {
   const t = value?.trim()
@@ -202,6 +204,9 @@ export class KanbanPanel {
           case 'startWithAI':
             await this._startWithAI(message.agent, message.permissionMode)
             break
+          case 'startIssueWithAI':
+            await this._startIssueWithAI(message.featureId, message.issueId, message.agent, message.permissionMode)
+            break
           case 'addIssue':
             await this._addIssue(message.featureId, message.title)
             break
@@ -349,10 +354,6 @@ export class KanbanPanel {
 
   private _getNonce(): string {
     return crypto.randomBytes(24).toString('base64url')
-  }
-
-  private _shellQuote(arg: string): string {
-    return "'" + arg.replace(/'/g, "'\\''") + "'"
   }
 
   private _getWorkspaceFeaturesDir(): string | null {
@@ -1039,63 +1040,55 @@ export class KanbanPanel {
     const titleMatch = feature.content.match(/^#\s+(.+)$/m)
     const title = titleMatch ? titleMatch[1].trim() : getTitleFromContent(feature.content)
 
-    const labels = feature.labels.length > 0 ? ` [${feature.labels.join(', ')}]` : ''
-    const description = feature.content.replace(/\n/g, ' ').replace(/\s+/g, ' ').trim()
-    const shortDesc = description.length > 200 ? description.substring(0, 200) + '...' : description
+    const prompt = buildFeaturePrompt({
+      title,
+      priority: feature.priority,
+      labels: feature.labels,
+      content: feature.content,
+      filePath: feature.filePath
+    })
 
-    const prompt = `Implement this feature: "${title}" (${feature.priority} priority)${labels}. ${shortDesc} See full details in: ${feature.filePath}`
+    this._dispatchAI(prompt, agent, permissionMode)
+  }
 
+  private async _startIssueWithAI(
+    featureId: string,
+    issueId: string,
+    agent?: AIAgent,
+    permissionMode?: AIPermissionMode
+  ): Promise<void> {
+    const feature = this._features.find(f => f.id === featureId)
+    const issue = feature?.issues?.find(i => i.id === issueId)
+    if (!feature || !issue) return
+
+    const prompt = buildIssuePrompt({
+      title: issue.title,
+      content: issue.content,
+      issuePath: issue.filePath,
+      specPath: feature.filePath
+    })
+
+    this._dispatchAI(prompt, agent, permissionMode)
+  }
+
+  private _dispatchAI(
+    prompt: string,
+    agent?: AIAgent,
+    permissionMode?: AIPermissionMode
+  ): void {
     // Use provided agent or fall back to config
     const config = vscode.workspace.getConfiguration('kanban-markdown')
-    const selectedAgent = agent || config.get<string>('aiAgent') || 'claude'
+    const selectedAgent = (agent || config.get<string>('aiAgent') || 'claude') as AIAgent
     const selectedPermissionMode = permissionMode || 'default'
 
-    let args: string[]
+    const args = buildAgentCommand(selectedAgent, selectedPermissionMode, prompt)
 
-    switch (selectedAgent) {
-      case 'claude': {
-        args = []
-        if (selectedPermissionMode !== 'default') {
-          args.push('--permission-mode', selectedPermissionMode)
-        }
-        args.push(prompt)
-        break
-      }
-      case 'codex': {
-        const approvalMap: Record<string, string> = {
-          'default': 'ask',
-          'plan': 'ask',
-          'acceptEdits': 'auto',
-          'bypassPermissions': 'full-auto'
-        }
-        const approvalMode = approvalMap[selectedPermissionMode] || 'suggest'
-        args = ['--ask-for-approval', approvalMode, prompt]
-        break
-      }
-      case 'copilot': {
-        args = [prompt]
-        break
-      }
-      case 'opencode': {
-        args = [prompt]
-        break
-      }
-      default:
-        args = [prompt]
-    }
-
-    const agentNames: Record<string, string> = {
-      'claude': 'Claude Code',
-      'codex': 'Codex',
-      'copilot': 'GitHub Copilot',
-      'opencode': 'OpenCode'
-    }
     const terminal = vscode.window.createTerminal({
-      name: agentNames[selectedAgent] || 'AI Agent',
+      name: AGENT_NAMES[selectedAgent] || 'AI Agent',
       cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath
     })
     terminal.show()
-    terminal.sendText([this._shellQuote(selectedAgent), ...args.map(a => this._shellQuote(a))].join(' '))
+    terminal.sendText([shellQuote(selectedAgent), ...args.map(a => shellQuote(a))].join(' '))
   }
 
   private async _deleteLabel(labelName: string): Promise<void> {

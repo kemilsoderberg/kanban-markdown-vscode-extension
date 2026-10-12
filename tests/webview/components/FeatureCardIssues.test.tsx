@@ -141,6 +141,28 @@ describe('FeatureCard — expandable issue list', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Build with AI on issues
+// ---------------------------------------------------------------------------
+
+describe('FeatureCard — issue Build with AI', () => {
+  it('exposes a Build with AI affordance per issue in the expanded list; clicking posts startIssueWithAI', () => {
+    setSettings()
+    render(<FeatureCard feature={makeFeature({ issues: [makeIssue(), makeIssue({ id: '002-b', title: 'Write tests' })] })} onClick={() => {}} />)
+    fireEvent.click(screen.getByRole('button', { name: /toggle issues/i }))
+    const buttons = screen.getAllByRole('button', { name: /build this issue with ai/i })
+    expect(buttons.length).toBe(2)
+    fireEvent.click(buttons[1])
+    expect(mockPostMessage).toHaveBeenCalledWith({
+      type: 'startIssueWithAI',
+      featureId: 'my-feature',
+      issueId: '002-b',
+      agent: 'claude',
+      permissionMode: 'default'
+    })
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Add issue from the card
 // ---------------------------------------------------------------------------
 
