@@ -173,3 +173,4 @@ export type WebviewMessage =
   | { type: 'saveIssueContent'; featureId: string; issueId: string; content: string; frontmatter: IssueFrontmatter }
   | { type: 'deleteIssue'; featureId: string; issueId: string }
   | { type: 'closeIssue' }
+  | { type: 'startIssueWithAI'; featureId: string; issueId: string; agent?: AIAgent; permissionMode?: AIPermissionMode }

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Calendar, Check, ChevronDown, ChevronRight, FileText, Layers, ListPlus, Plus } from 'lucide-react'
+import { Calendar, Check, ChevronDown, ChevronRight, FileText, Layers, ListPlus, Plus, Wand2 } from 'lucide-react'
 import { getTitleFromContent } from '../../shared/types'
 import type { Feature, Priority } from '../../shared/types'
 import { epicThemeFromName } from '../../shared/epicColor'
@@ -228,26 +228,47 @@ export function FeatureCard({ feature, onClick, isDragging }: FeatureCardProps) 
             {issuesExpanded && issues.length > 0 && (
               <div className="mt-1 space-y-0.5">
                 {issues.map((issue) => (
-                  <button
-                    key={issue.id}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      vscode.postMessage({ type: 'openIssue', featureId: feature.id, issueId: issue.id })
-                    }}
-                    className="flex items-center gap-1.5 w-full text-left text-[11px] rounded px-0.5 py-0.5 vscode-hover-bg transition-colors cursor-pointer"
-                    style={{ color: 'var(--vscode-foreground)' }}
-                  >
-                    <span
-                      className="w-1.5 h-1.5 rounded-full shrink-0"
-                      style={{
-                        backgroundColor:
-                          issue.status === 'done' ? '#22c55e' : issue.status === 'doing' ? '#f59e0b' : '#6b7280'
+                  <div key={issue.id} className="flex items-center gap-1 group/issue">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        vscode.postMessage({ type: 'openIssue', featureId: feature.id, issueId: issue.id })
                       }}
-                    />
-                    <span className={issue.status === 'done' ? 'line-through opacity-60' : ''}>
-                      {issue.title}
-                    </span>
-                  </button>
+                      className="flex items-center gap-1.5 flex-1 min-w-0 text-left text-[11px] rounded px-0.5 py-0.5 vscode-hover-bg transition-colors cursor-pointer"
+                      style={{ color: 'var(--vscode-foreground)' }}
+                    >
+                      <span
+                        className="w-1.5 h-1.5 rounded-full shrink-0"
+                        style={{
+                          backgroundColor:
+                            issue.status === 'done' ? '#22c55e' : issue.status === 'doing' ? '#f59e0b' : '#6b7280'
+                        }}
+                      />
+                      <span className={issue.status === 'done' ? 'line-through opacity-60' : ''}>
+                        {issue.title}
+                      </span>
+                    </button>
+                    {cardSettings.showBuildWithAI && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          vscode.postMessage({
+                            type: 'startIssueWithAI',
+                            featureId: feature.id,
+                            issueId: issue.id,
+                            agent: 'claude',
+                            permissionMode: 'default'
+                          })
+                        }}
+                        aria-label={t('editor.buildIssueWithAI')}
+                        title={t('editor.buildIssueWithAI')}
+                        className="opacity-0 group-hover/issue:opacity-100 p-0.5 rounded vscode-hover-bg transition-opacity cursor-pointer shrink-0"
+                        style={{ color: 'var(--vscode-descriptionForeground)' }}
+                      >
+                        <Wand2 size={10} />
+                      </button>
+                    )}
+                  </div>
                 ))}
               </div>
             )}
