@@ -8,6 +8,8 @@
 
 **An agent native kanban board for VS Code, backed by markdown files.**
 
+> **Fork notice:** This is a fork of [LachyFS/kanban-markdown-vscode-extension](https://github.com/LachyFS/kanban-markdown-vscode-extension) implementing support for the [Mattpocock AI skills setup](https://github.com/mattpocock) for a local issue tracker — features are stored as markdown directories with specs and issue subtasks that integrate with a local, skills-based agent workflow.
+
 [![VS Marketplace](https://img.shields.io/visual-studio-marketplace/v/LachyFS.kanban-markdown?label=VS%20Marketplace&logo=visualstudiocode)](https://marketplace.visualstudio.com/items?itemName=LachyFS.kanban-markdown)
 [![Open VSX](https://img.shields.io/open-vsx/v/LachyFS/kanban-markdown?label=Open%20VSX&logo=vscodium)](https://open-vsx.org/extension/LachyFS/kanban-markdown)
 [![Open VSX Downloads](https://img.shields.io/open-vsx/dt/LachyFS/kanban-markdown?label=Downloads&logo=vscodium)](https://open-vsx.org/extension/LachyFS/kanban-markdown)
