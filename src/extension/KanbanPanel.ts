@@ -2,13 +2,12 @@ import * as vscode from 'vscode'
 import * as crypto from 'crypto'
 import * as path from 'path'
 import { generateKeyBetween, generateNKeysBetween } from 'fractional-indexing'
-import { getTitleFromContent, generateFeatureFilename } from '../shared/types'
-import type { Feature, FeatureStatus, Priority, KanbanColumn, FeatureFrontmatter, CardDisplaySettings, FilenamePattern, AIAgent, AIPermissionMode, BoardViewMode } from '../shared/types'
-import { moveFeatureFile, getFeatureFilePath, getStatusFromPath, fileExists, getFeaturesDirectory, ensureFeaturesDirectory, listFeatureFiles, moveFeatureToDirectory, listStatusSubfolderFiles, removeStatusSubfolderIfEmpty, toWorkspaceRelativePath, getUniqueFeatureDirectory, ensureFeatureDirectory, migrateLegacyFeatureFiles } from './featureFileUtils'
-import { parseFeatureFile, serializeFeature } from '../shared/featureFrontmatter'
+import { getTitleFromContent, generateFeatureFilename, generateFeatureSlug } from '../shared/types'
+import type { Feature, FeatureStatus, Issue, IssueFrontmatter, Priority, KanbanColumn, FeatureFrontmatter, CardDisplaySettings, FilenamePattern, AIAgent, AIPermissionMode, BoardViewMode } from '../shared/types'
+import { moveFeatureFile, getFeatureFilePath, getStatusFromPath, fileExists, getFeaturesDirectory, ensureFeaturesDirectory, listFeatureFiles, moveFeatureToDirectory, listStatusSubfolderFiles, removeStatusSubfolderIfEmpty, toWorkspaceRelativePath, getUniqueFeatureDirectory, ensureFeatureDirectory, migrateLegacyFeatureFiles, getIssueFilePath, listIssueFiles, getNextIssueNumber } from './featureFileUtils'
+import { parseFeatureFile, serializeFeature, parseIssueFile, serializeIssue } from '../shared/featureFrontmatter'
 import { featureMatchesEpicLane } from '../shared/epicLane'
 import { t, getBundle, getEffectiveLocale, reloadBundle, getAllDefaultColumnNames, getDefaultColumnNamesForLocale } from './l10n'
-import { generateFeatureSlug } from '../shared/types'
 
 function normalizeEpic(value: string | null | undefined): string | null {
   const t = value?.trim()
@@ -36,6 +35,7 @@ export class KanbanPanel {
   private _disposables: vscode.Disposable[] = []
   private _fileWatcher: vscode.FileSystemWatcher | undefined
   private _currentEditingFeatureId: string | null = null
+  private _currentEditingIssueId: string | null = null
   private _lastWrittenContent: string = ''
   private _migrating = false
   private _onDisposeCallbacks: (() => void)[] = []
@@ -142,6 +142,7 @@ export class KanbanPanel {
             break
           case 'closeFeature':
             this._currentEditingFeatureId = null
+            this._currentEditingIssueId = null
             break
           case 'openFile': {
             const feat = this._features.find(f => f.id === message.featureId)
@@ -200,6 +201,21 @@ export class KanbanPanel {
             break
           case 'startWithAI':
             await this._startWithAI(message.agent, message.permissionMode)
+            break
+          case 'addIssue':
+            await this._addIssue(message.featureId, message.title)
+            break
+          case 'openIssue':
+            await this._sendIssueContent(message.featureId, message.issueId)
+            break
+          case 'saveIssueContent':
+            await this._saveIssueContent(message.featureId, message.issueId, message.content, message.frontmatter)
+            break
+          case 'deleteIssue':
+            await this._deleteIssue(message.featureId, message.issueId)
+            break
+          case 'closeIssue':
+            this._currentEditingIssueId = null
             break
         }
       },
@@ -369,7 +385,13 @@ export class KanbanPanel {
     for (const filePath of featureFiles) {
       const content = new TextDecoder().decode(await vscode.workspace.fs.readFile(vscode.Uri.file(filePath)))
       const feature = this._parseFeatureFile(content, filePath)
-      if (feature) features.push(feature)
+      if (feature) {
+        // Directory features carry their issues (location-linked membership)
+        if (path.basename(filePath) === 'spec.md') {
+          feature.issues = await this._loadIssues(path.dirname(filePath))
+        }
+        features.push(feature)
+      }
     }
     return features
   }
@@ -889,6 +911,119 @@ export class KanbanPanel {
     this._sendFeaturesToWebview()
   }
 
+  private async _loadIssues(featureDir: string): Promise<Issue[]> {
+    const issues: Issue[] = []
+    for (const filePath of await listIssueFiles(featureDir)) {
+      try {
+        const content = new TextDecoder().decode(await vscode.workspace.fs.readFile(vscode.Uri.file(filePath)))
+        const issue = parseIssueFile(content, filePath)
+        if (issue) issues.push(issue)
+      } catch {
+        // Skip unreadable files
+      }
+    }
+    // listIssueFiles returns paths alphabetically by filename
+    return issues
+  }
+
+  private async _addIssue(featureId: string, title: string): Promise<void> {
+    const feature = this._features.find(f => f.id === featureId)
+    if (!feature) return
+
+    const featureDir = path.dirname(feature.filePath)
+    const featuresDir = this._getWorkspaceFeaturesDir()
+    if (!featuresDir) return
+
+    const counter = await getNextIssueNumber(featureDir)
+    const padded = String(counter).padStart(3, '0')
+    const slug = generateFeatureSlug(title) || 'issue'
+    const issueId = `${padded}-${slug}`
+    const now = new Date().toISOString()
+
+    const issue: Issue = {
+      id: issueId,
+      status: 'todo',
+      created: now,
+      modified: now,
+      title: title.trim() || 'Untitled',
+      content: `# ${title.trim() || 'Untitled'}\n`,
+      filePath: getIssueFilePath(featureDir, issueId)
+    }
+
+    const fileContent = serializeIssue(issue)
+    await vscode.workspace.fs.createDirectory(vscode.Uri.file(path.join(featureDir, 'issues')))
+    await vscode.workspace.fs.writeFile(vscode.Uri.file(issue.filePath), new TextEncoder().encode(fileContent))
+
+    // Optimistic update: attach in memory and push immediately
+    if (feature.issues) {
+      feature.issues.push(issue)
+    } else {
+      feature.issues = [issue]
+    }
+    this._sendFeaturesToWebview()
+  }
+
+  private async _sendIssueContent(featureId: string, issueId: string): Promise<void> {
+    const feature = this._features.find(f => f.id === featureId)
+    const issue = feature?.issues?.find(i => i.id === issueId)
+    if (!feature || !issue) return
+
+    this._currentEditingIssueId = issueId
+
+    const frontmatter: IssueFrontmatter = {
+      id: issue.id,
+      status: issue.status,
+      created: issue.created,
+      modified: issue.modified
+    }
+
+    this._panel.webview.postMessage({
+      type: 'issueContent',
+      issueId: issue.id,
+      featureId: feature.id,
+      content: issue.content,
+      frontmatter
+    })
+  }
+
+  private async _saveIssueContent(
+    featureId: string,
+    issueId: string,
+    content: string,
+    frontmatter: IssueFrontmatter
+  ): Promise<void> {
+    const feature = this._features.find(f => f.id === featureId)
+    const issue = feature?.issues?.find(i => i.id === issueId)
+    if (!feature || !issue) return
+
+    issue.content = content
+    issue.status = frontmatter.status
+    issue.modified = new Date().toISOString()
+    issue.title = getTitleFromContent(content)
+
+    const fileContent = serializeIssue(issue)
+    this._lastWrittenContent = fileContent
+    await vscode.workspace.fs.writeFile(vscode.Uri.file(issue.filePath), new TextEncoder().encode(fileContent))
+
+    this._sendFeaturesToWebview()
+  }
+
+  private async _deleteIssue(featureId: string, issueId: string): Promise<void> {
+    const feature = this._features.find(f => f.id === featureId)
+    if (!feature?.issues) return
+
+    const issue = feature.issues.find(i => i.id === issueId)
+    if (!issue) return
+
+    try {
+      await vscode.workspace.fs.delete(vscode.Uri.file(issue.filePath))
+      feature.issues = feature.issues.filter(i => i.id !== issueId)
+      this._sendFeaturesToWebview()
+    } catch (err) {
+      vscode.window.showErrorMessage(t('panel.deleteFailed', { error: String(err) }))
+    }
+  }
+
   private async _startWithAI(
     agent?: AIAgent,
     permissionMode?: AIPermissionMode
@@ -1160,7 +1295,8 @@ export class KanbanPanel {
     const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath
     const features = this._features.map(f => ({
       ...f,
-      filePath: toWorkspaceRelativePath(f.filePath, workspaceRoot)
+      filePath: toWorkspaceRelativePath(f.filePath, workspaceRoot),
+      issues: f.issues?.map(i => ({ ...i, filePath: toWorkspaceRelativePath(i.filePath, workspaceRoot) }))
     }))
 
     this._panel.webview.postMessage({

@@ -1,8 +1,10 @@
-import { Calendar, Check, FileText, Layers } from 'lucide-react'
+import { useState } from 'react'
+import { Calendar, Check, ChevronDown, ChevronRight, FileText, Layers, ListPlus, Plus } from 'lucide-react'
 import { getTitleFromContent } from '../../shared/types'
 import type { Feature, Priority } from '../../shared/types'
 import { epicThemeFromName } from '../../shared/epicColor'
 import { useStore } from '../store'
+import { vscode } from '../vscodeApi'
 import { t } from '../lib/i18n'
 
 interface FeatureCardProps {
@@ -45,6 +47,11 @@ export function FeatureCard({ feature, onClick, isDragging }: FeatureCardProps) 
   const title = getTitleFromContent(feature.content)
   const description = getDescriptionFromContent(feature.content)
   const fileName = feature.filePath ? feature.filePath.split(/[/\\]/).pop() || '' : ''
+  const issues = feature.issues ?? []
+  const doneCount = issues.filter(i => i.status === 'done').length
+  const [issuesExpanded, setIssuesExpanded] = useState(false)
+  const [addingIssue, setAddingIssue] = useState(false)
+  const [newIssueTitle, setNewIssueTitle] = useState('')
 
   const formatDueDate = (dateStr: string | null) => {
     if (!dateStr) return null
@@ -85,6 +92,16 @@ export function FeatureCard({ feature, onClick, isDragging }: FeatureCardProps) 
   }
 
   const completedText = feature.status === 'done' ? formatCompletedAt(feature.completedAt) : null
+
+
+  const handleAddIssue = (): void => {
+    const trimmed = newIssueTitle.trim()
+    if (!trimmed) return
+    vscode.postMessage({ type: 'addIssue', featureId: feature.id, title: trimmed })
+    setNewIssueTitle('')
+    setAddingIssue(false)
+    setIssuesExpanded(true)
+  }
 
   const epicTrimmed = feature.epic?.trim()
   const epicTheme = epicTrimmed ? epicThemeFromName(epicTrimmed, isDarkMode) : null
@@ -161,6 +178,80 @@ export function FeatureCard({ feature, onClick, isDragging }: FeatureCardProps) 
             )}
           </div>
         )}
+
+        {/* Issues */}
+        <div className="mb-1">
+          <div className="flex items-center gap-1">
+            {issues.length > 0 && (
+              <button
+                onClick={(e) => { e.stopPropagation(); setIssuesExpanded(o => !o) }}
+                aria-label={t('card.issues.toggle')}
+                className="flex items-center gap-1 text-[10px] rounded px-0.5 py-0.5 vscode-hover-bg transition-colors cursor-pointer"
+                style={{ color: 'var(--vscode-descriptionForeground)' }}
+              >
+                {issuesExpanded ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
+                <span className="tabular-nums" aria-label="issue progress">
+                  {doneCount}/{issues.length}
+                </span>
+                <ListPlus size={10} />
+              </button>
+            )}
+            {!addingIssue && (
+              <button
+                onClick={(e) => { e.stopPropagation(); setAddingIssue(true) }}
+                aria-label={t('card.issues.add')}
+                title={t('card.issues.add')}
+                className="p-0.5 rounded vscode-hover-bg transition-colors cursor-pointer"
+                style={{ color: 'var(--vscode-descriptionForeground)' }}
+              >
+                <Plus size={10} />
+              </button>
+            )}
+          </div>
+            {addingIssue && (
+              <input
+                type="text"
+                value={newIssueTitle}
+                placeholder={t('card.issues.add')}
+                onClick={(e) => e.stopPropagation()}
+                onChange={(e) => setNewIssueTitle(e.target.value)}
+                onKeyDown={(e) => {
+                  e.stopPropagation()
+                  if (e.key === 'Enter') handleAddIssue()
+                  if (e.key === 'Escape') { setAddingIssue(false); setNewIssueTitle('') }
+                }}
+                className="mt-1 w-full text-xs bg-transparent border-none outline-none px-0.5"
+                style={{ color: 'var(--vscode-foreground)' }}
+                autoFocus
+              />
+            )}
+            {issuesExpanded && issues.length > 0 && (
+              <div className="mt-1 space-y-0.5">
+                {issues.map((issue) => (
+                  <button
+                    key={issue.id}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      vscode.postMessage({ type: 'openIssue', featureId: feature.id, issueId: issue.id })
+                    }}
+                    className="flex items-center gap-1.5 w-full text-left text-[11px] rounded px-0.5 py-0.5 vscode-hover-bg transition-colors cursor-pointer"
+                    style={{ color: 'var(--vscode-foreground)' }}
+                  >
+                    <span
+                      className="w-1.5 h-1.5 rounded-full shrink-0"
+                      style={{
+                        backgroundColor:
+                          issue.status === 'done' ? '#22c55e' : issue.status === 'doing' ? '#f59e0b' : '#6b7280'
+                      }}
+                    />
+                    <span className={issue.status === 'done' ? 'line-through opacity-60' : ''}>
+                      {issue.title}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+        </div>
       </div>
 
       {/* Footer */}

@@ -1,5 +1,5 @@
 import * as path from 'path'
-import type { Feature, FeatureStatus, Priority } from './types'
+import type { Feature, FeatureStatus, Issue, IssueStatus, Priority } from './types'
 
 /**
  * The feature id falls back to the filename base; for directory-layout
@@ -11,6 +11,15 @@ export function featureIdFromPath(filePath: string): string {
     return path.basename(path.dirname(filePath))
   }
   return base
+}
+
+// Issue title comes from the first `#` heading in the body, falling back to
+// the first non-empty line, then 'Untitled'.
+function getTitleFromIssueContent(content: string): string {
+  const match = content.match(/^#\s+(.+)$/m)
+  if (match) return match[1].trim()
+  const firstLine = content.split('\n').map(l => l.trim()).find(l => l.length > 0)
+  return firstLine || 'Untitled'
 }
 
 export function parseFeatureFile(content: string, filePath: string): Feature | null {
@@ -73,3 +82,46 @@ export function serializeFeature(feature: Feature): string {
 
   return frontmatter + feature.content
 }
+
+export function parseIssueFile(content: string, filePath: string): Issue | null {
+  content = content.replace(/\r\n/g, '\n')
+  const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/)
+  if (!frontmatterMatch) return null
+
+  const frontmatter = frontmatterMatch[1]
+  const body = frontmatterMatch[2] || ''
+
+  const getValue = (key: string): string => {
+    const match = frontmatter.match(new RegExp(`^${key}:\\s*(.*)$`, 'm'))
+    if (!match) return ''
+    const value = match[1].trim().replace(/^["']|["']$/g, '')
+    return value === 'null' ? '' : value
+  }
+
+  const title = getTitleFromIssueContent(body)
+
+  return {
+    id: getValue('id') || path.basename(filePath, '.md'),
+    status: (getValue('status') as IssueStatus) || 'todo',
+    created: getValue('created') || new Date().toISOString(),
+    modified: getValue('modified') || new Date().toISOString(),
+    title,
+    content: body.trim(),
+    filePath
+  }
+}
+
+export function serializeIssue(issue: Issue): string {
+  const frontmatter = [
+    '---',
+    `id: "${issue.id}"`,
+    `status: "${issue.status}"`,
+    `created: "${issue.created}"`,
+    `modified: "${issue.modified}"`,
+    '---',
+    ''
+  ].join('\n')
+
+  return frontmatter + issue.content
+}
+
