@@ -7,10 +7,11 @@ import { CreateFeatureDialog } from './components/CreateFeatureDialog'
 import { FeatureEditor } from './components/FeatureEditor'
 import { Toolbar } from './components/Toolbar'
 import { UndoToast } from './components/UndoToast'
-import type { Feature, Issue, FeatureStatus, Priority, ExtensionMessage, FeatureFrontmatter, IssueFrontmatter, AIAgent, AIPermissionMode, BoardViewMode } from '../shared/types'
+import type { Feature, FeatureStatus, Priority, ExtensionMessage, FeatureFrontmatter, IssueFrontmatter, AIAgent, AIPermissionMode, BoardViewMode } from '../shared/types'
 import { getTitleFromContent } from '../shared/types'
 import { vscode } from './vscodeApi'
 import { initLocale, t } from './lib/i18n'
+import { useUndoableDeletes } from './lib/useUndoableDeletes'
 
 function App(): React.JSX.Element {
 
@@ -52,82 +53,24 @@ function App(): React.JSX.Element {
     frontmatter: IssueFrontmatter
     contentVersion: number
   } | null>(null)
-  const editingIssueRef = useRef(editingIssue)
-  useEffect(() => {
-    editingIssueRef.current = editingIssue
-  }, [editingIssue])
 
-  // Undo delete stack (features and issues)
-  const [pendingDeletes, setPendingDeletes] = useState<{ id: string; feature: Feature; issue?: Issue }[]>([])
-  const pendingDeletesRef = useRef(pendingDeletes)
-  useEffect(() => {
-    pendingDeletesRef.current = pendingDeletes
-  }, [pendingDeletes])
-
-  const nextIdRef = useRef(0)
+  // Undo delete stack (features and issues): deletes are deferred until the
+  // undo toast expires, so every entry point routes through this hook.
+  const { pendingDeletes, deleteFeature, deleteIssue, commitDelete, undoDelete, undoLatest, hasPendingDeletes } =
+    useUndoableDeletes((featureId) => {
+      // Close the editor if the deleted feature is open
+      if (editingFeatureRef.current?.id === featureId) {
+        setEditingFeature(null)
+      }
+    })
 
   const handleDeleteFeatureFromCard = useCallback((featureId: string) => {
-    const { features } = useStore.getState()
-    const feature = features.find(f => f.id === featureId)
-    if (!feature) return
-
-    // Optimistically remove from local state
-    setFeatures(features.filter(f => f.id !== featureId))
-
-    // Close editor if this feature is open
-    if (editingFeature?.id === featureId) {
-      setEditingFeature(null)
-    }
-
-    // Push onto the undo stack
-    const id = String(nextIdRef.current++)
-    setPendingDeletes(prev => [...prev, { id, feature }])
-  }, [editingFeature, setFeatures])
+    deleteFeature(featureId)
+  }, [deleteFeature])
 
   const handleDeleteIssueFromList = useCallback((featureId: string, issueId: string) => {
-    const { features, removeIssue } = useStore.getState()
-    const feature = features.find(f => f.id === featureId)
-    const issue = feature?.issues?.find(i => i.id === issueId)
-    if (!issue) return
-
-    // Optimistically remove from local state
-    removeIssue(featureId, issueId)
-
-    // Push onto the undo stack (deletion is committed to the extension on expiry)
-    const id = String(nextIdRef.current++)
-    setPendingDeletes(prev => [...prev, { id, feature: feature!, issue }])
-  }, [])
-
-  const commitDelete = useCallback((entryId: string) => {
-    const entry = pendingDeletesRef.current.find(d => d.id === entryId)
-    if (!entry) return
-    if (entry.issue) {
-      vscode.postMessage({ type: 'deleteIssue', featureId: entry.feature.id, issueId: entry.issue.id })
-    } else {
-      vscode.postMessage({ type: 'deleteFeature', featureId: entry.feature.id })
-    }
-    setPendingDeletes(prev => prev.filter(d => d.id !== entryId))
-  }, [])
-
-  const handleUndoDelete = useCallback((entryId: string) => {
-    const entry = pendingDeletesRef.current.find(d => d.id === entryId)
-    if (!entry) return
-    if (entry.issue) {
-      // Restore the issue
-      useStore.getState().addIssue(entry.feature.id, entry.issue)
-    } else {
-      // Restore the feature
-      const { features } = useStore.getState()
-      setFeatures([...features, entry.feature])
-    }
-    setPendingDeletes(prev => prev.filter(d => d.id !== entryId))
-  }, [setFeatures])
-
-  const handleUndoLatest = useCallback(() => {
-    const stack = pendingDeletesRef.current
-    if (stack.length === 0) return
-    handleUndoDelete(stack[stack.length - 1].id)
-  }, [handleUndoDelete])
+    deleteIssue(featureId, issueId)
+  }, [deleteIssue])
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -149,9 +92,9 @@ function App(): React.JSX.Element {
       }
 
       // Ctrl/Cmd+Z to undo delete (works even in inputs)
-      if (e.key === 'z' && (e.ctrlKey || e.metaKey) && !e.shiftKey && pendingDeletesRef.current.length > 0) {
+      if (e.key === 'z' && (e.ctrlKey || e.metaKey) && !e.shiftKey && hasPendingDeletes()) {
         e.preventDefault()
-        handleUndoLatest()
+        undoLatest()
         return
       }
 
@@ -202,7 +145,7 @@ function App(): React.JSX.Element {
       window.removeEventListener('mousedown', handleMouseDown)
       if (altDownTimer) clearTimeout(altDownTimer)
     }
-  }, [createFeatureOpen, handleUndoLatest])
+  }, [createFeatureOpen, undoLatest, hasPendingDeletes])
 
   // Listen for VSCode theme changes
   useEffect(() => {
@@ -291,15 +234,6 @@ function App(): React.JSX.Element {
           })
           break
         }
-        case 'issuesUpdated': {
-          // External change (e.g. hand-created file picked up by the watcher):
-          // refresh the feature's issues in place.
-          const { features, setFeatures: setF } = useStore.getState()
-          setF(features.map((f) =>
-            f.id === message.featureId ? { ...f, issues: message.issues } : f
-          ))
-          break
-        }
       }
     }
 
@@ -357,7 +291,7 @@ function App(): React.JSX.Element {
     vscode.postMessage({ type: 'closeIssue' })
   }
 
-  const handleStartWithAI = (issueId: string | null, agent: AIAgent, permissionMode: AIPermissionMode): void => {
+  const handleStartWithAI = (issueId: string | null, agent?: AIAgent, permissionMode?: AIPermissionMode): void => {
     if (issueId !== null && editingIssue) {
       vscode.postMessage({ type: 'startIssueWithAI', featureId: editingIssue.featureId, issueId, agent, permissionMode })
       return
@@ -471,6 +405,7 @@ function App(): React.JSX.Element {
               onSave={handleSaveFeature}
               onClose={handleCloseEditor}
               onDelete={handleDeleteFeature}
+              onDeleteIssue={handleDeleteIssueFromEditor}
               onOpenFile={handleOpenFile}
               onStartWithAI={handleStartWithAI}
             />
@@ -499,6 +434,7 @@ function App(): React.JSX.Element {
               onSave={handleSaveFeature}
               onClose={handleCloseIssueEditor}
               onDelete={() => handleDeleteIssueFromEditor(editingIssue.featureId, editingIssue.issueId)}
+              onDeleteIssue={handleDeleteIssueFromEditor}
               onOpenFile={handleOpenFile}
               onStartWithAI={handleStartWithAI}
             />
@@ -517,7 +453,7 @@ function App(): React.JSX.Element {
         <UndoToast
           key={entry.id}
           message={t('app.deleted', { title: entry.issue ? entry.issue.title : getTitleFromContent(entry.feature.content) })}
-          onUndo={() => handleUndoDelete(entry.id)}
+          onUndo={() => undoDelete(entry.id)}
           onExpire={() => commitDelete(entry.id)}
           duration={5000}
           index={i}

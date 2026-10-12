@@ -61,11 +61,11 @@ function makeFeature(overrides: Partial<Feature> = {}): Feature {
   }
 }
 
-function setup(issues: Issue[], featureId = 'my-feature') {
+function setup(issues: Issue[], featureId = 'my-feature', onDeleteIssue?: (featureId: string, issueId: string) => void, onStartWithAI?: (issueId: string) => void) {
   useStore.setState({
     features: [makeFeature({ id: featureId, issues })]
   })
-  return render(<MiniIssueBoard featureId={featureId} />)
+  return render(<MiniIssueBoard featureId={featureId} onDeleteIssue={onDeleteIssue} onStartWithAI={onStartWithAI} />)
 }
 
 // ---------------------------------------------------------------------------
@@ -185,6 +185,21 @@ describe('MiniIssueBoard — add issue', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Delete routes through the undo-toast flow
+// ---------------------------------------------------------------------------
+
+describe('MiniIssueBoard — delete', () => {
+  it('the delete button calls the delete handler instead of posting deleteIssue directly', () => {
+    const onDeleteIssue = vi.fn()
+    setup([makeIssue({ id: '001-a', title: 'Set up database' })], 'my-feature', onDeleteIssue)
+    const row = screen.getByText('Set up database').closest('div')!
+    fireEvent.click(row.querySelector('button[title="Delete issue"]')!)
+    expect(onDeleteIssue).toHaveBeenCalledWith('my-feature', '001-a')
+    expect(mockPostMessage).not.toHaveBeenCalled()
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Click opens the issue
 // ---------------------------------------------------------------------------
 
@@ -197,5 +212,21 @@ describe('MiniIssueBoard — open issue', () => {
       featureId: 'my-feature',
       issueId: '001-a'
     })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Build with AI — routed through the shared plumbing, no hardcoded agent
+// ---------------------------------------------------------------------------
+
+describe('MiniIssueBoard — build with AI', () => {
+  it('the wand button calls the AI handler with the issue id only', () => {
+    const onStartWithAI = vi.fn()
+    setup([makeIssue({ id: '001-a', title: 'Set up database' })], 'my-feature', undefined, onStartWithAI)
+    const row = screen.getByText('Set up database').closest('div')!
+    const wand = row.querySelector('button[title="Build this issue with AI"]')!
+    fireEvent.click(wand)
+    expect(onStartWithAI).toHaveBeenCalledWith('001-a')
+    expect(mockPostMessage).not.toHaveBeenCalled()
   })
 })

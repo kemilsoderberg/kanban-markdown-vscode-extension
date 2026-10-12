@@ -4,7 +4,7 @@ import * as path from 'path'
 import { generateKeyBetween, generateNKeysBetween } from 'fractional-indexing'
 import { getTitleFromContent, generateFeatureSlug } from '../shared/types'
 import type { Feature, FeatureStatus, Issue, IssueStatus, IssueFrontmatter, Priority, KanbanColumn, FeatureFrontmatter, CardDisplaySettings, AIAgent, AIPermissionMode, BoardViewMode } from '../shared/types'
-import { getFeaturesDirectory, ensureFeaturesDirectory, listFeatureFiles, moveFeatureToDirectory, toWorkspaceRelativePath, getUniqueFeatureDirectory, ensureFeatureDirectory, migrateLegacyFeatureFiles, getIssueFilePath, listIssueFiles, getNextIssueNumber } from './featureFileUtils'
+import { getFeaturesDirectory, ensureFeaturesDirectory, moveFeatureToDirectory, toWorkspaceRelativePath, getUniqueFeatureDirectory, ensureFeatureDirectory, maybeRunLegacyMigration, loadFeatureDirectory, getIssueFilePath, listIssueFiles, getNextIssueNumber, isDirectoryFeaturePath } from './featureFileUtils'
 import { parseFeatureFile, serializeFeature, parseIssueFile, serializeIssue } from '../shared/featureFrontmatter'
 import { featureMatchesEpicLane } from '../shared/epicLane'
 import { t, getBundle, getEffectiveLocale, reloadBundle, getAllDefaultColumnNames, getDefaultColumnNamesForLocale } from './l10n'
@@ -381,18 +381,21 @@ export class KanbanPanel {
   }
 
   private async _loadFeatureFiles(featuresDir: string): Promise<Feature[]> {
+    // The loader lives in the file layer so legacy flat features stay
+    // visible after a declined migration; KanbanPanel only parses and
+    // attaches issues.
+    const loaded = await loadFeatureDirectory(
+      featuresDir,
+      vscode.workspace.fs as Parameters<typeof loadFeatureDirectory>[1],
+      (content, filePath) => this._parseFeatureFile(content, filePath)
+    )
     const features: Feature[] = []
-    const featureFiles = await listFeatureFiles(featuresDir)
-    for (const filePath of featureFiles) {
-      const content = new TextDecoder().decode(await vscode.workspace.fs.readFile(vscode.Uri.file(filePath)))
-      const feature = this._parseFeatureFile(content, filePath)
-      if (feature) {
-        // Directory features carry their issues (location-linked membership)
-        if (path.basename(filePath) === 'spec.md') {
-          feature.issues = await this._loadIssues(path.dirname(filePath))
-        }
-        features.push(feature)
+    for (const raw of loaded) {
+      const feature = raw as Feature
+      if (isDirectoryFeaturePath(feature.filePath)) {
+        feature.issues = await this._loadIssues(path.dirname(feature.filePath))
       }
+      features.push(feature)
     }
     return features
   }
@@ -411,12 +414,14 @@ export class KanbanPanel {
       // Detects flat .md files (and done/ contents), shows one confirmation
       // dialog with the feature count, then converts each file into
       // <slug>/spec.md. Guarded by the migrating flag so the watcher does
-      // not fight the migration.
+      // not fight the migration. A decline is remembered for the session
+      // (no re-prompt on every reload) and the loader keeps legacy flat
+      // features visible on the board while the files stay on disk.
       this._migrating = true
       try {
-        const migrationResult = await migrateLegacyFeatureFiles(
+        await maybeRunLegacyMigration(
           featuresDir,
-          vscode.workspace.fs as Parameters<typeof migrateLegacyFeatureFiles>[1],
+          vscode.workspace.fs as Parameters<typeof maybeRunLegacyMigration>[1],
           async (count) => {
             const message = count === 1
               ? t('panel.directoryMigrationOne')
@@ -430,11 +435,6 @@ export class KanbanPanel {
             return answer === convertButton
           }
         )
-        if (migrationResult.cancelled) {
-          const features = await this._loadFeatureFiles(featuresDir)
-          this._features = this._sortFeatures(features)
-          return
-        }
       } finally {
         this._migrating = false
       }
@@ -462,8 +462,9 @@ export class KanbanPanel {
         }
 
         for (const f of migrationWrites) {
-          const content = this._serializeFeature(f)
-          await vscode.workspace.fs.writeFile(vscode.Uri.file(f.filePath), new TextEncoder().encode(content))
+          // Declined-migration legacy flat features stay untouched on disk
+          if (!isDirectoryFeaturePath(f.filePath)) continue
+          await this._writeFeature(f)
         }
       }
 
@@ -479,6 +480,31 @@ export class KanbanPanel {
 
   private _serializeFeature(feature: Feature): string {
     return serializeFeature(feature)
+  }
+
+  /** Serializes a feature and writes it to its spec.md file. */
+  private async _writeFeature(feature: Feature): Promise<void> {
+    const content = this._serializeFeature(feature)
+    await vscode.workspace.fs.writeFile(vscode.Uri.file(feature.filePath), new TextEncoder().encode(content))
+  }
+
+  /** Writes a feature file and pushes the updated board to the webview. */
+  private async _writeFeatureAndPush(feature: Feature): Promise<void> {
+    await this._writeFeature(feature)
+    this._sendFeaturesToWebview()
+  }
+
+  /** Looks up an issue by feature and issue id in the in-memory board. */
+  private _findIssue(featureId: string, issueId: string): { feature: Feature; issue: Issue } | null {
+    const feature = this._features.find(f => f.id === featureId)
+    const issue = feature?.issues?.find(i => i.id === issueId)
+    return feature && issue ? { feature, issue } : null
+  }
+
+  /** Serializes an issue and writes it to its issue file. */
+  private async _writeIssue(issue: Issue): Promise<void> {
+    const fileContent = serializeIssue(issue)
+    await vscode.workspace.fs.writeFile(vscode.Uri.file(issue.filePath), new TextEncoder().encode(fileContent))
   }
 
   public triggerCreateDialog(): void {
@@ -534,9 +560,8 @@ export class KanbanPanel {
       filePath: path.join(featureDir, 'spec.md')
     }
 
-    const content = this._serializeFeature(feature)
     await ensureFeatureDirectory(featureDir)
-    await vscode.workspace.fs.writeFile(vscode.Uri.file(feature.filePath), new TextEncoder().encode(content))
+    await this._writeFeature(feature)
 
     this._features.push(feature)
     this._sendFeaturesToWebview()
@@ -568,10 +593,7 @@ export class KanbanPanel {
     feature.order = generateKeyBetween(before, after)
 
     // Only the moved feature needs to be written
-    const content = this._serializeFeature(feature)
-    await vscode.workspace.fs.writeFile(vscode.Uri.file(feature.filePath), new TextEncoder().encode(content))
-
-    this._sendFeaturesToWebview()
+    await this._writeFeatureAndPush(feature)
   }
 
   private async _moveAllCards(
@@ -602,8 +624,7 @@ export class KanbanPanel {
         feature.completedAt = newStatus === 'done' ? new Date().toISOString() : null
         feature.order = newKeys[i]
 
-        const content = this._serializeFeature(feature)
-        await vscode.workspace.fs.writeFile(vscode.Uri.file(feature.filePath), new TextEncoder().encode(content))
+        await this._writeFeature(feature)
       }
     } finally {
       this._migrating = false
@@ -689,10 +710,7 @@ export class KanbanPanel {
     }
 
     // Persist to file
-    const content = this._serializeFeature(feature)
-    await vscode.workspace.fs.writeFile(vscode.Uri.file(feature.filePath), new TextEncoder().encode(content))
-
-    this._sendFeaturesToWebview()
+    await this._writeFeatureAndPush(feature)
   }
 
   private async _openFeatureInNativeEditor(featureId: string): Promise<void> {
@@ -761,7 +779,7 @@ export class KanbanPanel {
     // Save to file
     const fileContent = this._serializeFeature(feature)
     this._lastWrittenContent = fileContent
-    await vscode.workspace.fs.writeFile(vscode.Uri.file(feature.filePath), new TextEncoder().encode(fileContent))
+    await this._writeFeature(feature)
 
     // Update all features in webview
     this._sendFeaturesToWebview()
@@ -806,10 +824,8 @@ export class KanbanPanel {
       filePath: getIssueFilePath(featureDir, issueId)
     }
 
-    const fileContent = serializeIssue(issue)
     await vscode.workspace.fs.createDirectory(vscode.Uri.file(path.join(featureDir, 'issues')))
-    await vscode.workspace.fs.writeFile(vscode.Uri.file(issue.filePath), new TextEncoder().encode(fileContent))
-
+    await this._writeIssue(issue)
     // Optimistic update: attach in memory and push immediately
     if (feature.issues) {
       feature.issues.push(issue)
@@ -820,9 +836,9 @@ export class KanbanPanel {
   }
 
   private async _sendIssueContent(featureId: string, issueId: string): Promise<void> {
-    const feature = this._features.find(f => f.id === featureId)
-    const issue = feature?.issues?.find(i => i.id === issueId)
-    if (!feature || !issue) return
+    const found = this._findIssue(featureId, issueId)
+    if (!found) return
+    const { feature, issue } = found
 
     this._currentEditingIssueId = issueId
 
@@ -848,9 +864,9 @@ export class KanbanPanel {
     content: string,
     frontmatter: IssueFrontmatter
   ): Promise<void> {
-    const feature = this._features.find(f => f.id === featureId)
-    const issue = feature?.issues?.find(i => i.id === issueId)
-    if (!feature || !issue) return
+    const found = this._findIssue(featureId, issueId)
+    if (!found) return
+    const { issue } = found
 
     issue.content = content
     issue.status = frontmatter.status
@@ -859,36 +875,34 @@ export class KanbanPanel {
 
     const fileContent = serializeIssue(issue)
     this._lastWrittenContent = fileContent
-    await vscode.workspace.fs.writeFile(vscode.Uri.file(issue.filePath), new TextEncoder().encode(fileContent))
+    await this._writeIssue(issue)
 
     this._sendFeaturesToWebview()
   }
 
   private async _moveIssue(featureId: string, issueId: string, newStatus: IssueStatus): Promise<void> {
-    const feature = this._features.find(f => f.id === featureId)
-    const issue = feature?.issues?.find(i => i.id === issueId)
-    if (!feature || !issue) return
+    const found = this._findIssue(featureId, issueId)
+    if (!found) return
+    const { issue } = found
 
     issue.status = newStatus
     issue.modified = new Date().toISOString()
 
     const fileContent = serializeIssue(issue)
     this._lastWrittenContent = fileContent
-    await vscode.workspace.fs.writeFile(vscode.Uri.file(issue.filePath), new TextEncoder().encode(fileContent))
+    await this._writeIssue(issue)
 
     this._sendFeaturesToWebview()
   }
 
   private async _deleteIssue(featureId: string, issueId: string): Promise<void> {
-    const feature = this._features.find(f => f.id === featureId)
-    if (!feature?.issues) return
-
-    const issue = feature.issues.find(i => i.id === issueId)
-    if (!issue) return
+    const found = this._findIssue(featureId, issueId)
+    if (!found) return
+    const { feature, issue } = found
 
     try {
       await vscode.workspace.fs.delete(vscode.Uri.file(issue.filePath))
-      feature.issues = feature.issues.filter(i => i.id !== issueId)
+      feature.issues = (feature.issues ?? []).filter(i => i.id !== issueId)
       this._sendFeaturesToWebview()
     } catch (err) {
       vscode.window.showErrorMessage(t('panel.deleteFailed', { error: String(err) }))
@@ -927,9 +941,9 @@ export class KanbanPanel {
     agent?: AIAgent,
     permissionMode?: AIPermissionMode
   ): Promise<void> {
-    const feature = this._features.find(f => f.id === featureId)
-    const issue = feature?.issues?.find(i => i.id === issueId)
-    if (!feature || !issue) return
+    const found = this._findIssue(featureId, issueId)
+    if (!found) return
+    const { feature, issue } = found
 
     const prompt = buildIssuePrompt({
       title: issue.title,
@@ -986,8 +1000,7 @@ export class KanbanPanel {
         feature.labels.splice(idx, 1)
         feature.modified = new Date().toISOString()
 
-        const content = this._serializeFeature(feature)
-        await vscode.workspace.fs.writeFile(vscode.Uri.file(feature.filePath), new TextEncoder().encode(content))
+        await this._writeFeature(feature)
       }
     }
 
@@ -1013,8 +1026,7 @@ export class KanbanPanel {
       }
       feature.modified = new Date().toISOString()
 
-      const content = this._serializeFeature(feature)
-      await vscode.workspace.fs.writeFile(vscode.Uri.file(feature.filePath), new TextEncoder().encode(content))
+      await this._writeFeature(feature)
       updatedCount++
     }
 

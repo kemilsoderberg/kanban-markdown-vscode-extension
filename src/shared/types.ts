@@ -105,7 +105,6 @@ export type ExtensionMessage =
   | { type: 'triggerCreateDialog' }
   | { type: 'featureContent'; featureId: string; content: string; frontmatter: FeatureFrontmatter }
   | { type: 'issueContent'; issueId: string; featureId: string; content: string; frontmatter: IssueFrontmatter }
-  | { type: 'issuesUpdated'; featureId: string; issues: Issue[] }
 
 // Frontmatter for editing
 export interface FeatureFrontmatter {

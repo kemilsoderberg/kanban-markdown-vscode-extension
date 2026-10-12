@@ -1,4 +1,11 @@
 import * as path from 'path'
+import { isDirectoryFeaturePath } from './featureFrontmatter'
+
+/** Flattens markdown content to one line, truncated for the prompt. */
+function shortDesc(content: string): string {
+  const description = content.replace(/\n/g, ' ').replace(/\s+/g, ' ').trim()
+  return description.length > 200 ? description.substring(0, 200) + '...' : description
+}
 
 /**
  * The shared prompt sent to an AI agent for a feature. References the
@@ -13,16 +20,15 @@ export function buildFeaturePrompt(input: {
   filePath: string
 }): string {
   const labels = input.labels.length > 0 ? ` [${input.labels.join(', ')}]` : ''
-  const description = input.content.replace(/\n/g, ' ').replace(/\s+/g, ' ').trim()
-  const shortDesc = description.length > 200 ? description.substring(0, 200) + '...' : description
+  const desc = shortDesc(input.content)
 
   let details = `See full details in: ${input.filePath}`
-  if (path.basename(input.filePath) === 'spec.md') {
+  if (isDirectoryFeaturePath(input.filePath)) {
     const issuesDir = path.join(path.dirname(input.filePath), 'issues')
     details += ` and its subtasks in: ${issuesDir}`
   }
 
-  return `Implement this feature: "${input.title}" (${input.priority} priority)${labels}. ${shortDesc} ${details}`
+  return `Implement this feature: "${input.title}" (${input.priority} priority)${labels}. ${desc} ${details}`
 }
 
 /**
@@ -35,7 +41,5 @@ export function buildIssuePrompt(input: {
   issuePath: string
   specPath: string
 }): string {
-  const description = input.content.replace(/\n/g, ' ').replace(/\s+/g, ' ').trim()
-  const shortDesc = description.length > 200 ? description.substring(0, 200) + '...' : description
-  return `Implement this issue: "${input.title}". ${shortDesc} See full details in: ${input.issuePath}. The feature spec for context is: ${input.specPath}`
+  return `Implement this issue: "${input.title}". ${shortDesc(input.content)} See full details in: ${input.issuePath}. The feature spec for context is: ${input.specPath}`
 }

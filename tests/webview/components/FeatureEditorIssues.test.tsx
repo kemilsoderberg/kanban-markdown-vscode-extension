@@ -107,13 +107,14 @@ function setup(overrides: { feature?: Feature; issueFrontmatter?: IssueFrontmatt
         labels: feature.labels,
         order: feature.order
       }}
-      issueFrontmatter={overrides.issueFrontmatter ?? null}
-      onSave={() => {}}
-      onClose={() => {}}
-      onDelete={() => {}}
-      onOpenFile={() => {}}
-      onStartWithAI={() => {}}
-    />
+        issueFrontmatter={overrides.issueFrontmatter ?? null}
+        onSave={() => {}}
+        onClose={() => {}}
+        onDelete={() => {}}
+        onDeleteIssue={() => {}}
+        onOpenFile={() => {}}
+        onStartWithAI={() => {}}
+      />
   )
 }
 
@@ -150,17 +151,46 @@ describe('FeatureEditor — issue list', () => {
     })
   })
 
-  it('shows a delete affordance per issue; confirming posts deleteIssue', () => {
-    render(setup())
+  it('shows a delete affordance per issue; deleting routes through the undo flow handler', () => {
+    const onDeleteIssue = vi.fn()
+    const feature = makeFeature({
+      issues: [makeIssue(), makeIssue({ id: '002-b', title: 'Write tests', status: 'doing' })]
+    })
+    useStore.setState({ features: [feature], cardSettings: defaultSettings })
+    render(
+      <FeatureEditor
+        featureId={feature.id}
+        content={'# My Feature\n\nBody.'}
+        frontmatter={{
+          id: feature.id,
+          status: feature.status,
+          priority: feature.priority,
+          assignee: feature.assignee,
+          epic: feature.epic,
+          dueDate: feature.dueDate,
+          created: feature.created,
+          modified: feature.modified,
+          completedAt: feature.completedAt,
+          labels: feature.labels,
+          order: feature.order
+        }}
+        issueFrontmatter={null}
+        onSave={() => {}}
+        onClose={() => {}}
+        onDelete={() => {}}
+        onDeleteIssue={onDeleteIssue}
+        onOpenFile={() => {}}
+        onStartWithAI={() => {}}
+      />
+    )
     fireEvent.click(screen.getByText('Write tests'))
     // The delete affordance sits in the same row as the issue title
     const row = screen.getByText('Write tests').closest('div')!
     fireEvent.click(row.querySelector('button[title="Delete issue"]')!)
-    expect(mockPostMessage).toHaveBeenCalledWith({
-      type: 'deleteIssue',
-      featureId: 'my-feature',
-      issueId: '002-b'
-    })
+    // The undo-toast flow handler is called; no immediate deleteIssue message
+    expect(onDeleteIssue).toHaveBeenCalledWith('my-feature', '002-b')
+    const deletePosts = mockPostMessage.mock.calls.filter(([m]) => (m as { type: string }).type === 'deleteIssue')
+    expect(deletePosts).toHaveLength(0)
   })
 
   it('renders the issues as a three-column mini-board (todo / doing / done)', () => {
@@ -210,7 +240,43 @@ describe('FeatureEditor — issue Build with AI', () => {
     const buttons = screen.getAllByRole('button', { name: /build this issue with ai/i })
     expect(buttons.length).toBe(2)
     fireEvent.click(buttons[0])
-    expect(onStartWithAI).toHaveBeenCalledWith('001-setup-db', 'claude', 'default')
+    // No hardcoded agent/permission-mode: the extension resolves the user's
+    // configured defaults (same plumbing as feature-level dispatch).
+    expect(onStartWithAI).toHaveBeenCalledWith('001-setup-db')
+  })
+
+  it('Ctrl/Cmd+B dispatches the open issue without a hardcoded agent', () => {
+    const onStartWithAI = vi.fn()
+    const feature = makeFeature({ issues: [makeIssue()] })
+    useStore.setState({ features: [feature], cardSettings: defaultSettings })
+    render(
+      <FeatureEditor
+        featureId={feature.id}
+        content={'# Set up database'}
+        frontmatter={{
+          id: feature.id,
+          status: feature.status,
+          priority: feature.priority,
+          assignee: feature.assignee,
+          epic: feature.epic,
+          dueDate: feature.dueDate,
+          created: feature.created,
+          modified: feature.modified,
+          completedAt: feature.completedAt,
+          labels: feature.labels,
+          order: feature.order
+        }}
+        issueFrontmatter={makeIssueFrontmatter()}
+        onSave={() => {}}
+        onClose={() => {}}
+        onDelete={() => {}}
+        onDeleteIssue={() => {}}
+        onOpenFile={() => {}}
+        onStartWithAI={onStartWithAI}
+      />
+    )
+    fireEvent.keyDown(window, { key: 'b', ctrlKey: true })
+    expect(onStartWithAI).toHaveBeenCalledWith('001-setup-db')
   })
 })
 

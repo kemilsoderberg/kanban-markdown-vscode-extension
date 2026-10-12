@@ -1,7 +1,15 @@
 import * as path from 'path'
 import * as vscode from 'vscode'
-import { parseFeatureFile, serializeFeature } from '../shared/featureFrontmatter'
 import { getTitleFromContent, generateFeatureSlug } from '../shared/types'
+import {
+  parseFeatureFile,
+  serializeFeature,
+  isDirectoryFeaturePath
+} from '../shared/featureFrontmatter'
+
+// Re-exported so the file layer remains the single seam for "which file is
+// which" decisions.
+export { isDirectoryFeaturePath }
 
 export interface FsAdapter {
   stat(uri: vscode.Uri): Thenable<vscode.FileStat>
@@ -9,7 +17,15 @@ export interface FsAdapter {
   createDirectory(uri: vscode.Uri): Thenable<void>
 }
 
-export async function fileExists(filePath: string, fs: FsAdapter = vscode.workspace.fs): Promise<boolean> {
+/** The extra capabilities the loader and migration need on top of FsAdapter. */
+export interface ReadDirAdapter extends FsAdapter {
+  readDirectory(uri: vscode.Uri): Thenable<[string, number][]>
+}
+
+export async function fileExists(
+  filePath: string,
+  fs: FsAdapter = vscode.workspace.fs
+): Promise<boolean> {
   try {
     await fs.stat(vscode.Uri.file(filePath))
     return true
@@ -29,7 +45,10 @@ const FILE_TYPE_DIRECTORY = 2
  * Resolves the features directory from the workspace root and the
  * `featuresDirectory` setting value. Central decision: where features live.
  */
-export function getFeaturesDirectory(workspaceRoot: string | null | undefined, configured: string | undefined): string | null {
+export function getFeaturesDirectory(
+  workspaceRoot: string | null | undefined,
+  configured: string | undefined
+): string | null {
   if (!workspaceRoot) return null
   return path.join(workspaceRoot, configured || DEFAULT_FEATURES_DIRECTORY)
 }
@@ -52,7 +71,10 @@ export function isFeatureFilePath(filePath: string, featuresDir: string): boolea
  * Creates the features directory.
  * Central decision: what directory structure must exist before use.
  */
-export async function ensureFeaturesDirectory(featuresDir: string, fs: FsAdapter = vscode.workspace.fs): Promise<void> {
+export async function ensureFeaturesDirectory(
+  featuresDir: string,
+  fs: FsAdapter = vscode.workspace.fs
+): Promise<void> {
   await fs.createDirectory(vscode.Uri.file(featuresDir))
 }
 
@@ -61,11 +83,10 @@ export async function ensureFeaturesDirectory(featuresDir: string, fs: FsAdapter
  * `<slug>/spec.md` per feature directory. Central decision: where features
  * are read from. Directories without a spec.md are malformed and skipped,
  * just like unparseable files.
- * Requires a `readDirectory` capability in addition to the base FsAdapter.
  */
 export async function listFeatureFiles(
   featuresDir: string,
-  fs: FsAdapter & { readDirectory(uri: vscode.Uri): Thenable<[string, number][]> } = vscode.workspace.fs as FsAdapter & { readDirectory(uri: vscode.Uri): Thenable<[string, number][]> }
+  fs: ReadDirAdapter = vscode.workspace.fs as ReadDirAdapter
 ): Promise<string[]> {
   const files: string[] = []
   try {
@@ -83,6 +104,29 @@ export async function listFeatureFiles(
     return []
   }
 
+  return files
+}
+
+/**
+ * Lists legacy flat feature files: `.md` files directly in the features
+ * directory (never inside a feature directory or the done/ subfolder).
+ * Central decision: what counts as a legacy layout remnant in the loader.
+ */
+export async function listLegacyFlatFeatureFiles(
+  featuresDir: string,
+  fs: ReadDirAdapter = vscode.workspace.fs as ReadDirAdapter
+): Promise<string[]> {
+  const files: string[] = []
+  try {
+    const entries = await fs.readDirectory(vscode.Uri.file(featuresDir))
+    for (const [name, type] of entries) {
+      if (type === FILE_TYPE_FILE && name.endsWith('.md')) {
+        files.push(path.join(featuresDir, name))
+      }
+    }
+  } catch {
+    return []
+  }
   return files
 }
 
@@ -112,7 +156,10 @@ export async function getUniqueFeatureDirectory(
 ): Promise<string> {
   let name = slug
   let counter = 2
-  while (await fileExists(path.join(featuresDir, name), fs) || await fileExists(path.join(featuresDir, `${name}.md`), fs)) {
+  while (
+    await fileExists(path.join(featuresDir, name), fs) ||
+    await fileExists(path.join(featuresDir, `${name}.md`), fs)
+  ) {
     name = `${slug}-${counter}`
     counter++
   }
@@ -183,7 +230,7 @@ export function getIssueFilePath(featureDir: string, issueId: string): string {
  */
 export async function listIssueFiles(
   featureDir: string,
-  fs: FsAdapter & { readDirectory(uri: vscode.Uri): Thenable<[string, number][]> } = vscode.workspace.fs as FsAdapter & { readDirectory(uri: vscode.Uri): Thenable<[string, number][]> }
+  fs: ReadDirAdapter = vscode.workspace.fs as ReadDirAdapter
 ): Promise<string[]> {
   const issuesDir = path.join(featureDir, 'issues')
   try {
@@ -205,7 +252,7 @@ export async function listIssueFiles(
  */
 export async function getNextIssueNumber(
   featureDir: string,
-  fs: FsAdapter & { readDirectory(uri: vscode.Uri): Thenable<[string, number][]> } = vscode.workspace.fs as FsAdapter & { readDirectory(uri: vscode.Uri): Thenable<[string, number][]> }
+  fs: ReadDirAdapter = vscode.workspace.fs as ReadDirAdapter
 ): Promise<number> {
   const issuesDir = path.join(featureDir, 'issues')
   let max = 0
@@ -225,16 +272,11 @@ export async function getNextIssueNumber(
   return max + 1
 }
 
-// vscode.FileType.File — referenced numerically so FsAdapter stubs don't
-// need the full vscode module mocked
-const LEGACY_FILE_TYPE_FILE = 1
-
 /**
  * A read/write filesystem view used by migration, extending FsAdapter with
  * the capabilities the one-time conversion needs.
  */
-export interface MigrationFs extends FsAdapter {
-  readDirectory(uri: vscode.Uri): Thenable<[string, number][]>
+export interface MigrationFs extends ReadDirAdapter {
   readFile(uri: vscode.Uri): Thenable<Uint8Array>
   writeFile(uri: vscode.Uri, content: Uint8Array): Thenable<void>
   delete(uri: vscode.Uri, options?: { recursive?: boolean }): Thenable<void>
@@ -253,13 +295,13 @@ export interface LegacyMigrationResult {
  */
 export async function detectLegacyFeatureFiles(
   featuresDir: string,
-  fs: Pick<MigrationFs, 'readDirectory' | 'stat'> = vscode.workspace.fs as MigrationFs
+  fs: Pick<MigrationFs, 'readDirectory'> = vscode.workspace.fs as MigrationFs
 ): Promise<string[]> {
   const legacy: string[] = []
   try {
     const entries = await fs.readDirectory(vscode.Uri.file(featuresDir))
     for (const [name, type] of entries) {
-      if (type === LEGACY_FILE_TYPE_FILE && name.endsWith('.md')) {
+      if (type === FILE_TYPE_FILE && name.endsWith('.md')) {
         legacy.push(path.join(featuresDir, name))
       }
     }
@@ -271,7 +313,7 @@ export async function detectLegacyFeatureFiles(
   try {
     const doneEntries = await fs.readDirectory(vscode.Uri.file(doneDir))
     for (const [name, type] of doneEntries) {
-      if (type === LEGACY_FILE_TYPE_FILE && name.endsWith('.md')) {
+      if (type === FILE_TYPE_FILE && name.endsWith('.md')) {
         legacy.push(path.join(doneDir, name))
       }
     }
@@ -342,7 +384,8 @@ export async function migrateLegacyFeatureFiles(
         specContent = serializeFeature(feature)
       }
 
-      await fs.writeFile(vscode.Uri.file(path.join(featureDir, 'spec.md')), new TextEncoder().encode(specContent))
+      const encoded = new TextEncoder().encode(specContent)
+      await fs.writeFile(vscode.Uri.file(path.join(featureDir, 'spec.md')), encoded)
       migrated++
     } catch {
       skipped++
@@ -370,4 +413,106 @@ export async function migrateLegacyFeatureFiles(
   }
 
   return { migrated, skipped, cancelled: false }
+}
+
+// ---------------------------------------------------------------------------
+// Migration offer state — session-scoped decline (review finding 2)
+// ---------------------------------------------------------------------------
+
+let migrationDeclinedThisSession = false
+
+/** Test hook: clears the session-scoped migration-decline marker. */
+export function resetMigrationDeclined(): void {
+  migrationDeclinedThisSession = false
+}
+
+/** Whether the user declined the legacy migration this session. */
+export function isMigrationDeclined(): boolean {
+  return migrationDeclinedThisSession
+}
+
+export interface MaybeMigrationResult extends LegacyMigrationResult {
+  /** True when the offer was suppressed because the user already declined. */
+  skippedOffer?: boolean
+}
+
+/**
+ * Runs the one-time legacy migration, showing the confirm dialog only when
+ * legacy files exist. A decline is remembered for this session so the user
+ * is not re-prompted on every reload while the flat files remain on disk;
+ * the marker clears as soon as no legacy files are detected, so a real
+ * legacy layout that appears later is offered again. When the offer is
+ * skipped the result reports `skippedOffer: true`.
+ */
+export async function maybeRunLegacyMigration(
+  featuresDir: string,
+  fs: MigrationFs = vscode.workspace.fs as MigrationFs,
+  confirm?: (count: number) => Thenable<boolean>
+): Promise<MaybeMigrationResult> {
+  const legacyFiles = await detectLegacyFeatureFiles(featuresDir, fs)
+
+  if (legacyFiles.length === 0) {
+    // Nothing legacy on disk: a decline is no longer relevant, so the
+    // dialog will be offered again if a legacy layout shows up later.
+    migrationDeclinedThisSession = false
+    return { migrated: 0, skipped: 0, cancelled: false }
+  }
+
+  if (migrationDeclinedThisSession) {
+    return { migrated: 0, skipped: 0, cancelled: true, skippedOffer: true }
+  }
+
+  const result = await migrateLegacyFeatureFiles(featuresDir, fs, confirm)
+  if (result.cancelled) {
+    migrationDeclinedThisSession = true
+  }
+  return result
+}
+
+// ---------------------------------------------------------------------------
+// Feature loading (review finding 3: declined migration must not hide
+// legacy flat features)
+// ---------------------------------------------------------------------------
+
+/**
+ * Loads every feature for the board from disk: directory features via
+ * `listFeatureFiles`, plus legacy flat features when the one-time
+ * migration was declined this session. Legacy flat features are loaded
+ * read-only — the in-memory board shows them, but disk stays untouched
+ * until the user accepts the migration.
+ */
+export async function loadFeatureDirectory(
+  featuresDir: string,
+  fs: MigrationFs = vscode.workspace.fs as MigrationFs,
+  readFeature: (content: string, filePath: string) => unknown | null = (content, filePath) =>
+    parseFeatureFile(content, filePath)
+): Promise<unknown[]> {
+  const features: unknown[] = []
+
+  for (const filePath of await listFeatureFiles(featuresDir, fs)) {
+    try {
+      const content = new TextDecoder().decode(await fs.readFile(vscode.Uri.file(filePath)))
+      const feature = readFeature(content, filePath)
+      if (feature) features.push(feature)
+    } catch {
+      // Skip unreadable files
+    }
+  }
+
+  if (isMigrationDeclined()) {
+    // Migration was declined: legacy flat files stay on disk, so include
+    // them in the in-memory board (read-only) instead of letting them
+    // vanish from view.
+    for (const filePath of await listLegacyFlatFeatureFiles(featuresDir, fs)) {
+      try {
+        const content = new TextDecoder().decode(await fs.readFile(vscode.Uri.file(filePath)))
+        const feature = readFeature(content, filePath)
+        if (feature) features.push(feature)
+      } catch {
+        // Skip unreadable files
+      }
+    }
+  }
+
+  return features
 }
