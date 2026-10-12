@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, afterEach } from 'vitest'
 import path from 'path'
 import type { FsAdapter } from '../../src/extension/featureFileUtils'
 
@@ -23,7 +23,12 @@ import {
   getUniqueFeatureDirectory,
   ensureFeatureDirectory,
   detectLegacyFeatureFiles,
-  migrateLegacyFeatureFiles
+  migrateLegacyFeatureFiles,
+  maybeRunLegacyMigration,
+  resetMigrationDeclined,
+  isMigrationDeclined,
+  loadFeatureDirectory,
+  isDirectoryFeaturePath
 } from '../../src/extension/featureFileUtils'
 
 // ---------------------------------------------------------------------------
@@ -725,5 +730,116 @@ describe('migrateLegacyFeatureFiles dialog gate', () => {
     const result = await migrateLegacyFeatureFiles(FEATURES_DIR, fs as never)
     expect(result.migrated).toBe(1)
     expect(files.has(path.join(FEATURES_DIR, 'alpha', 'spec.md'))).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Declined migration: session-scoped persistence (review finding 2)
+// ---------------------------------------------------------------------------
+
+describe('migration decline persistence', () => {
+  const legacyContent = '---\nid: "alpha"\nstatus: "todo"\n---\n# Alpha\n'
+
+  afterEach(() => resetMigrationDeclined())
+
+  it('a declined migration is not re-offered within the same session', async () => {
+    const { fs } = makeMemFs({
+      [path.join(FEATURES_DIR, 'alpha.md')]: legacyContent
+    }, [FEATURES_DIR])
+
+    const confirm = vi.fn(async () => false)
+    const first = await maybeRunLegacyMigration(FEATURES_DIR, fs as never, confirm)
+    expect(first.cancelled).toBe(true)
+    expect(confirm).toHaveBeenCalledOnce()
+
+    const second = await maybeRunLegacyMigration(FEATURES_DIR, fs as never, confirm)
+    expect(second.skippedOffer).toBe(true)
+    // Confirm dialog was NOT shown a second time
+    expect(confirm).toHaveBeenCalledOnce()
+    // Files untouched
+    expect(isMigrationDeclined()).toBe(true)
+  })
+
+  it('an accepted migration is not marked declined and files are gone afterwards', async () => {
+    const { fs } = makeMemFs({
+      [path.join(FEATURES_DIR, 'alpha.md')]: legacyContent
+    }, [FEATURES_DIR])
+
+    const confirm = vi.fn(async () => true)
+    const result = await maybeRunLegacyMigration(FEATURES_DIR, fs as never, confirm)
+    expect(result.cancelled).toBe(false)
+    expect(result.migrated).toBe(1)
+    expect(isMigrationDeclined()).toBe(false)
+  })
+
+  it('decline resets when the legacy files are gone, so a later re-added legacy file prompts again', async () => {
+    const { fs, files } = makeMemFs({
+      [path.join(FEATURES_DIR, 'alpha.md')]: legacyContent
+    }, [FEATURES_DIR])
+
+    const confirm = vi.fn(async () => false)
+    await maybeRunLegacyMigration(FEATURES_DIR, fs as never, confirm)
+    expect(confirm).toHaveBeenCalledOnce()
+
+    // Legacy file disappears (user migrated by hand or deleted it)
+    files.delete(path.join(FEATURES_DIR, 'alpha.md'))
+    await maybeRunLegacyMigration(FEATURES_DIR, fs as never, confirm)
+    expect(isMigrationDeclined()).toBe(false)
+    expect(confirm).toHaveBeenCalledOnce()
+
+    // Re-add a legacy file: the dialog is offered again
+    files.set(path.join(FEATURES_DIR, 'beta.md'), legacyContent)
+    await maybeRunLegacyMigration(FEATURES_DIR, fs as never, confirm)
+    expect(confirm).toHaveBeenCalledTimes(2)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Declined migration: flat features stay visible on the board (finding 3)
+// ---------------------------------------------------------------------------
+
+describe('loadFeatureDirectory with a declined migration', () => {
+  const legacyContent = '---\nid: "alpha"\nstatus: "todo"\n---\n# Alpha\n'
+
+  afterEach(() => resetMigrationDeclined())
+
+  it('returns legacy flat features read-only alongside directory features after a decline', async () => {
+    const { fs } = makeMemFs({
+      [path.join(FEATURES_DIR, 'alpha.md')]: legacyContent,
+      [path.join(FEATURES_DIR, 'dir-feature', 'spec.md')]: '---\nid: "dir-feature"\nstatus: "todo"\n---\n# Dir\n'
+    }, [FEATURES_DIR, path.join(FEATURES_DIR, 'dir-feature', 'issues')])
+
+    const confirm = vi.fn(async () => false)
+    await maybeRunLegacyMigration(FEATURES_DIR, fs as never, confirm)
+
+    const features = await loadFeatureDirectory(FEATURES_DIR, fs as never)
+    const ids = features.map(f => f.id)
+    expect(ids).toContain('alpha')
+    expect(ids).toContain('dir-feature')
+    // The flat feature is marked as legacy (read-only on disk, in-memory only)
+    const alpha = features.find(f => f.id === 'alpha')!
+    expect(alpha.filePath).toBe(path.join(FEATURES_DIR, 'alpha.md'))
+  })
+
+  it('returns only directory features when there is nothing legacy', async () => {
+    const { fs } = makeMemFs({
+      [path.join(FEATURES_DIR, 'dir-feature', 'spec.md')]: '---\nid: "dir-feature"\nstatus: "todo"\n---\n# Dir\n'
+    }, [FEATURES_DIR, path.join(FEATURES_DIR, 'dir-feature', 'issues')])
+
+    const features = await loadFeatureDirectory(FEATURES_DIR, fs as never)
+    expect(features.map(f => f.id)).toEqual(['dir-feature'])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// isDirectoryFeaturePath (finding 8: the "is this spec.md" knowledge lives
+// in the file layer, not in prompt-building)
+// ---------------------------------------------------------------------------
+
+describe('isDirectoryFeaturePath', () => {
+  it('is true for a <slug>/spec.md path and false for a flat file or issue file', () => {
+    expect(isDirectoryFeaturePath(path.join(FEATURES_DIR, 'my-feature', 'spec.md'))).toBe(true)
+    expect(isDirectoryFeaturePath(path.join(FEATURES_DIR, 'my-feature.md'))).toBe(false)
+    expect(isDirectoryFeaturePath(path.join(FEATURES_DIR, 'my-feature', 'issues', '001-a.md'))).toBe(false)
   })
 })

@@ -30,6 +30,7 @@ import type {
 } from '../../shared/types'
 import { cn } from '../lib/utils'
 import { t } from '../lib/i18n'
+import { ISSUE_STATUS_DOTS } from '../lib/issueColors'
 import { useStore } from '../store'
 import { vscode } from '../vscodeApi'
 import { AssigneeInput } from './AssigneeInput'
@@ -54,9 +55,12 @@ interface FeatureEditorProps {
   onSave: (content: string, frontmatter: FeatureFrontmatter) => void
   onClose: () => void
   onDelete: () => void
+  /** Delete an issue through the shared undo-toast flow (App-level). */
+  onDeleteIssue: (featureId: string, issueId: string) => void
   onOpenFile: () => void
-  /** First argument is the issue id to dispatch, or null for the feature's spec. */
-  onStartWithAI: (issueId: string | null, agent: AIAgent, permissionMode: AIPermissionMode) => void
+  /** First argument is the issue id to dispatch, or null for the feature's spec.
+   * Agent and permission mode are omitted to use the user's configured defaults. */
+  onStartWithAI: (issueId: string | null, agent?: AIAgent, permissionMode?: AIPermissionMode) => void
 }
 
 function getPriorityLabels(): Record<Priority, string> {
@@ -105,12 +109,6 @@ function getIssueStatusLabels(): Record<IssueStatus, string> {
 }
 
 const issueStatuses: IssueStatus[] = ['todo', 'doing', 'done']
-
-const issueStatusDots: Record<IssueStatus, string> = {
-  todo: 'bg-blue-400',
-  doing: 'bg-amber-400',
-  done: 'bg-emerald-400'
-}
 
 function getAiAgentTabs(): { agent: AIAgent; label: string; color: string; activeColor: string }[] {
   return [
@@ -556,6 +554,7 @@ export function FeatureEditor({
   onSave,
   onClose,
   onDelete,
+  onDeleteIssue,
   onOpenFile,
   onStartWithAI
 }: FeatureEditorProps) {
@@ -728,7 +727,9 @@ export function FeatureEditor({
       if ((e.metaKey || e.ctrlKey) && e.key === 'b' && cardSettings.showBuildWithAI) {
         e.preventDefault()
         const editingIssueId = isIssueMode && currentIssueFrontmatter ? currentIssueFrontmatter.id : null
-        onStartWithAI(editingIssueId, 'claude', 'default')
+        // No agent override: the extension resolves the user's configured
+        // defaults, the same plumbing as feature-level dispatch.
+        onStartWithAI(editingIssueId)
       }
       if (e.key === 'Escape') {
         // Flush any pending save before closing
@@ -852,7 +853,7 @@ export function FeatureEditor({
               options={issueStatuses.map((s) => ({
                 value: s,
                 label: issueStatusLabels[s],
-                dot: issueStatusDots[s]
+                dot: ISSUE_STATUS_DOTS[s]
               }))}
               onChange={(v) => handleIssueFrontmatterUpdate({ status: v as IssueStatus })}
             />
@@ -946,7 +947,11 @@ export function FeatureEditor({
               {issues.filter((i) => i.status === 'done').length}/{issues.length}
             </span>
           </div>
-          <MiniIssueBoard featureId={featureId} onStartWithAI={onStartWithAI} />
+          <MiniIssueBoard
+            featureId={featureId}
+            onDeleteIssue={onDeleteIssue}
+            onStartWithAI={(issueId) => onStartWithAI(issueId)}
+          />
         </div>
       )}
 

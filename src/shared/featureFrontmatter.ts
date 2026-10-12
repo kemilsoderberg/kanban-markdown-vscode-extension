@@ -1,5 +1,6 @@
 import * as path from 'path'
 import type { Feature, FeatureStatus, Issue, IssueStatus, Priority } from './types'
+import { getTitleFromContent } from './types'
 
 /**
  * The feature id falls back to the filename base; for directory-layout
@@ -13,35 +14,24 @@ export function featureIdFromPath(filePath: string): string {
   return base
 }
 
-// Issue title comes from the first `#` heading in the body, falling back to
-// the first non-empty line, then 'Untitled'.
-function getTitleFromIssueContent(content: string): string {
-  const match = content.match(/^#\s+(.+)$/m)
-  if (match) return match[1].trim()
-  const firstLine = content.split('\n').map(l => l.trim()).find(l => l.length > 0)
-  return firstLine || 'Untitled'
+/**
+ * Decides whether a path points at a feature directory's spec file
+ * (`<...>/spec.md`) as opposed to a legacy flat feature file or an issue
+ * file. Central decision: what makes a feature a directory feature.
+ */
+export function isDirectoryFeaturePath(filePath: string): boolean {
+  return path.basename(filePath) === 'spec.md'
 }
 
+// Issue titles use the same rule as feature titles: the first `#` heading,
+// falling back to the first non-empty line, then 'Untitled' (shared with
+// types.ts via getTitleFromContent).
+
 export function parseFeatureFile(content: string, filePath: string): Feature | null {
-  content = content.replace(/\r\n/g, '\n')
-  const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/)
-  if (!frontmatterMatch) return null
+  const split = splitFrontmatter(content)
+  if (!split) return null
 
-  const frontmatter = frontmatterMatch[1]
-  const body = frontmatterMatch[2] || ''
-
-  const getValue = (key: string): string => {
-    const match = frontmatter.match(new RegExp(`^${key}:\\s*(.*)$`, 'm'))
-    if (!match) return ''
-    const value = match[1].trim().replace(/^["']|["']$/g, '')
-    return value === 'null' ? '' : value
-  }
-
-  const getArrayValue = (key: string): string[] => {
-    const match = frontmatter.match(new RegExp(`^${key}:\\s*\\[([^\\]]*)\\]`, 'm'))
-    if (!match) return []
-    return match[1].split(',').map(s => s.trim().replace(/^["']|["']$/g, '')).filter(Boolean)
-  }
+  const { getValue, getArrayValue } = splitFrontmatterHelpers(split.frontmatter)
 
   const id = getValue('id') || featureIdFromPath(filePath)
 
@@ -57,7 +47,7 @@ export function parseFeatureFile(content: string, filePath: string): Feature | n
     completedAt: getValue('completedAt') || null,
     labels: getArrayValue('labels'),
     order: getValue('order') || 'a0',
-    content: body.trim(),
+    content: split.body.trim(),
     filePath
   }
 }
@@ -83,14 +73,11 @@ export function serializeFeature(feature: Feature): string {
   return frontmatter + feature.content
 }
 
-export function parseIssueFile(content: string, filePath: string): Issue | null {
-  content = content.replace(/\r\n/g, '\n')
-  const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/)
-  if (!frontmatterMatch) return null
-
-  const frontmatter = frontmatterMatch[1]
-  const body = frontmatterMatch[2] || ''
-
+/** The line-scoped frontmatter accessors shared by the feature and issue parsers. */
+function splitFrontmatterHelpers(frontmatter: string): {
+  getValue: (key: string) => string
+  getArrayValue: (key: string) => string[]
+} {
   const getValue = (key: string): string => {
     const match = frontmatter.match(new RegExp(`^${key}:\\s*(.*)$`, 'm'))
     if (!match) return ''
@@ -98,7 +85,30 @@ export function parseIssueFile(content: string, filePath: string): Issue | null 
     return value === 'null' ? '' : value
   }
 
-  const title = getTitleFromIssueContent(body)
+  const getArrayValue = (key: string): string[] => {
+    const match = frontmatter.match(new RegExp(`^${key}:\\s*\\[([^\\]]*)\\]`, 'm'))
+    if (!match) return []
+    return match[1].split(',').map(s => s.trim().replace(/^["']|["']$/g, '')).filter(Boolean)
+  }
+
+  return { getValue, getArrayValue }
+}
+
+/** The frontmatter extraction shared by the feature and issue parsers. */
+function splitFrontmatter(content: string): { frontmatter: string; body: string } | null {
+  const normalized = content.replace(/\r\n/g, '\n')
+  const frontmatterMatch = normalized.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/)
+  if (!frontmatterMatch) return null
+  return { frontmatter: frontmatterMatch[1], body: frontmatterMatch[2] || '' }
+}
+
+export function parseIssueFile(content: string, filePath: string): Issue | null {
+  const split = splitFrontmatter(content)
+  if (!split) return null
+
+  const { getValue } = splitFrontmatterHelpers(split.frontmatter)
+
+  const title = getTitleFromContent(split.body)
 
   return {
     id: getValue('id') || path.basename(filePath, '.md'),
@@ -106,7 +116,7 @@ export function parseIssueFile(content: string, filePath: string): Issue | null 
     created: getValue('created') || new Date().toISOString(),
     modified: getValue('modified') || new Date().toISOString(),
     title,
-    content: body.trim(),
+    content: split.body.trim(),
     filePath
   }
 }

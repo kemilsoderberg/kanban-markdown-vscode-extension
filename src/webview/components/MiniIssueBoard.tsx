@@ -4,7 +4,8 @@ import { useStore } from '../store'
 import { vscode } from '../vscodeApi'
 import { t } from '../lib/i18n'
 import { cn } from '../lib/utils'
-import type { AIAgent, AIPermissionMode, Issue, IssueStatus } from '../../shared/types'
+import { ISSUE_STATUS_DOTS } from '../lib/issueColors'
+import type { Issue, IssueStatus } from '../../shared/types'
 
 const ISSUE_COLUMNS: { id: IssueStatus; nameKey: string }[] = [
   { id: 'todo', nameKey: 'status.todo' },
@@ -12,19 +13,16 @@ const ISSUE_COLUMNS: { id: IssueStatus; nameKey: string }[] = [
   { id: 'done', nameKey: 'status.done' }
 ]
 
-const ISSUE_COLUMN_DOTS: Record<IssueStatus, string> = {
-  todo: 'bg-blue-400',
-  doing: 'bg-amber-400',
-  done: 'bg-emerald-400'
-}
-
 interface MiniIssueBoardProps {
   featureId: string
-  /** When set, issue cards get a Build-with-AI affordance (issue-scoped). */
-  onStartWithAI?: (issueId: string | null, agent: AIAgent, permissionMode: AIPermissionMode) => void
+  /** Delete routes through the shared undo-toast flow (App-level handler). */
+  onDeleteIssue?: (featureId: string, issueId: string) => void
+  /** Issue-scoped Build-with-AI: receives the issue id; the agent and
+   * permission mode come from the user's configured defaults upstream. */
+  onStartWithAI?: (issueId: string) => void
 }
 
-export function MiniIssueBoard({ featureId, onStartWithAI }: MiniIssueBoardProps) {
+export function MiniIssueBoard({ featureId, onDeleteIssue, onStartWithAI }: MiniIssueBoardProps) {
   const features = useStore((s) => s.features)
   const getIssuesByStatus = useStore((s) => s.getIssuesByStatus)
   const [draggedIssueId, setDraggedIssueId] = useState<string | null>(null)
@@ -74,7 +72,7 @@ export function MiniIssueBoard({ featureId, onStartWithAI }: MiniIssueBoardProps
             className="flex flex-col bg-zinc-100 dark:bg-zinc-800/50 rounded-lg p-1.5 gap-1"
           >
             <div className="flex items-center gap-1.5 px-1">
-              <span className={cn('w-1.5 h-1.5 rounded-full shrink-0', ISSUE_COLUMN_DOTS[column.id])} />
+              <span className={cn('w-1.5 h-1.5 rounded-full shrink-0', ISSUE_STATUS_DOTS[column.id])} />
               <span
                 className="text-[10px] font-medium uppercase tracking-wide"
                 style={{ color: 'var(--vscode-descriptionForeground)' }}
@@ -109,7 +107,7 @@ export function MiniIssueBoard({ featureId, onStartWithAI }: MiniIssueBoardProps
                 </button>
                 {onStartWithAI && (
                   <button
-                    onClick={() => onStartWithAI(issue.id, 'claude', 'default')}
+                    onClick={() => onStartWithAI(issue.id)}
                     title={t('editor.buildIssueWithAI')}
                     aria-label={t('editor.buildIssueWithAI')}
                     className="opacity-0 group-hover/mini-issue:opacity-100 shrink-0 transition-opacity cursor-pointer"
@@ -119,9 +117,7 @@ export function MiniIssueBoard({ featureId, onStartWithAI }: MiniIssueBoardProps
                   </button>
                 )}
                 <button
-                  onClick={() =>
-                    vscode.postMessage({ type: 'deleteIssue', featureId, issueId: issue.id })
-                  }
+                  onClick={() => onDeleteIssue?.(featureId, issue.id)}
                   title={t('editor.deleteIssue')}
                   aria-label={t('editor.deleteIssue')}
                   className="opacity-0 group-hover/mini-issue:opacity-100 shrink-0 transition-opacity cursor-pointer"

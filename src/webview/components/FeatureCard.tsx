@@ -3,6 +3,7 @@ import { Calendar, Check, ChevronDown, ChevronRight, FileText, Layers, ListPlus,
 import { getTitleFromContent } from '../../shared/types'
 import type { Feature, Priority } from '../../shared/types'
 import { epicThemeFromName } from '../../shared/epicColor'
+import { ISSUE_STATUS_DOTS } from '../lib/issueColors'
 import { useStore } from '../store'
 import { vscode } from '../vscodeApi'
 import { t } from '../lib/i18n'
@@ -238,11 +239,7 @@ export function FeatureCard({ feature, onClick, isDragging }: FeatureCardProps) 
                       style={{ color: 'var(--vscode-foreground)' }}
                     >
                       <span
-                        className="w-1.5 h-1.5 rounded-full shrink-0"
-                        style={{
-                          backgroundColor:
-                            issue.status === 'done' ? '#22c55e' : issue.status === 'doing' ? '#f59e0b' : '#6b7280'
-                        }}
+                        className={`w-1.5 h-1.5 rounded-full shrink-0 ${ISSUE_STATUS_DOTS[issue.status]}`}
                       />
                       <span className={issue.status === 'done' ? 'line-through opacity-60' : ''}>
                         {issue.title}
@@ -252,12 +249,13 @@ export function FeatureCard({ feature, onClick, isDragging }: FeatureCardProps) 
                       <button
                         onClick={(e) => {
                           e.stopPropagation()
+                          // No agent/permission-mode override: the extension
+                          // resolves the user's configured defaults, the same
+                          // plumbing as feature-level dispatch.
                           vscode.postMessage({
                             type: 'startIssueWithAI',
                             featureId: feature.id,
-                            issueId: issue.id,
-                            agent: 'claude',
-                            permissionMode: 'default'
+                            issueId: issue.id
                           })
                         }}
                         aria-label={t('editor.buildIssueWithAI')}
