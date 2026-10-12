@@ -1,5 +1,7 @@
 import * as path from 'path'
 import * as vscode from 'vscode'
+import { parseFeatureFile, serializeFeature } from '../shared/featureFrontmatter'
+import { getTitleFromContent, generateFeatureSlug } from '../shared/types'
 
 export interface FsAdapter {
   stat(uri: vscode.Uri): Thenable<vscode.FileStat>
@@ -362,4 +364,151 @@ export async function getNextIssueNumber(
     // issues/ directory doesn't exist yet — start at 1
   }
   return max + 1
+}
+
+// vscode.FileType.File / FileType.Directory — referenced numerically so
+// FsAdapter stubs don't need the full vscode module mocked
+const LEGACY_FILE_TYPE_FILE = 1
+
+/**
+ * A read/write filesystem view used by migration, extending FsAdapter with
+ * the capabilities the one-time conversion needs.
+ */
+export interface MigrationFs extends FsAdapter {
+  readDirectory(uri: vscode.Uri): Thenable<[string, number][]>
+  readFile(uri: vscode.Uri): Thenable<Uint8Array>
+  writeFile(uri: vscode.Uri, content: Uint8Array): Thenable<void>
+  delete(uri: vscode.Uri, options?: { recursive?: boolean }): Thenable<void>
+}
+
+export interface LegacyMigrationResult {
+  migrated: number
+  skipped: number
+  cancelled: boolean
+}
+
+/**
+ * Detects legacy layout files that would be converted by the directory
+ * migration: flat `.md` files at the features root and `.md` files inside
+ * the `done/` subfolder. Directory features (spec.md) are not legacy.
+ */
+export async function detectLegacyFeatureFiles(
+  featuresDir: string,
+  fs: Pick<MigrationFs, 'readDirectory' | 'stat'> = vscode.workspace.fs as MigrationFs
+): Promise<string[]> {
+  const legacy: string[] = []
+  try {
+    const entries = await fs.readDirectory(vscode.Uri.file(featuresDir))
+    for (const [name, type] of entries) {
+      if (type === LEGACY_FILE_TYPE_FILE && name.endsWith('.md')) {
+        legacy.push(path.join(featuresDir, name))
+      }
+    }
+  } catch {
+    return []
+  }
+
+  const doneDir = path.join(featuresDir, 'done')
+  try {
+    const doneEntries = await fs.readDirectory(vscode.Uri.file(doneDir))
+    for (const [name, type] of doneEntries) {
+      if (type === LEGACY_FILE_TYPE_FILE && name.endsWith('.md')) {
+        legacy.push(path.join(doneDir, name))
+      }
+    }
+  } catch {
+    // done/ may not exist; nothing legacy there
+  }
+
+  return legacy
+}
+
+/**
+ * One-time migration from the flat layout to feature directories. Shows the
+ * confirm dialog (via the injected `confirm` callback, when provided) with
+ * the number of legacy features before touching any file; declining aborts
+ * cleanly. Each flat file becomes `<slug>/spec.md` with its content
+ * preserved byte-for-byte; files in `done/` get `status: done` written into
+ * their frontmatter. Unparseable files are skipped. The `done/` folder and
+ * any other empty legacy status subfolder are removed afterwards when empty.
+ */
+export async function migrateLegacyFeatureFiles(
+  featuresDir: string,
+  fs: MigrationFs = vscode.workspace.fs as MigrationFs,
+  confirm?: (count: number) => Thenable<boolean>
+): Promise<LegacyMigrationResult> {
+  const legacyFiles = await detectLegacyFeatureFiles(featuresDir, fs)
+
+  if (legacyFiles.length === 0) {
+    return { migrated: 0, skipped: 0, cancelled: false }
+  }
+
+  if (confirm) {
+    const accepted = await confirm(legacyFiles.length)
+    if (!accepted) {
+      return { migrated: 0, skipped: 0, cancelled: true }
+    }
+  }
+
+  let migrated = 0
+  let skipped = 0
+
+  for (const filePath of legacyFiles) {
+    let content = ''
+    let deleted = false
+    try {
+      content = new TextDecoder().decode(await fs.readFile(vscode.Uri.file(filePath)))
+      const feature = parseFeatureFile(content, filePath)
+      if (!feature) {
+        skipped++
+        continue
+      }
+
+      const title = getTitleFromContent(feature.content)
+      const slug = generateFeatureSlug(title)
+
+      // Remove the source file first so it does not collide with its own
+      // target directory name. On failure below, restore it.
+      await fs.delete(vscode.Uri.file(filePath))
+      deleted = true
+
+      const dirName = await getUniqueFeatureDirectory(featuresDir, slug, fs)
+      const featureDir = path.join(featuresDir, dirName)
+      await fs.createDirectory(vscode.Uri.file(path.join(featureDir, 'issues')))
+
+      let specContent = content
+      if (path.dirname(filePath) === path.join(featuresDir, 'done') && feature.status !== 'done') {
+        feature.status = 'done'
+        feature.filePath = filePath
+        specContent = serializeFeature(feature)
+      }
+
+      await fs.writeFile(vscode.Uri.file(path.join(featureDir, 'spec.md')), new TextEncoder().encode(specContent))
+      migrated++
+    } catch {
+      skipped++
+      if (deleted) {
+        try {
+          await fs.writeFile(vscode.Uri.file(filePath), new TextEncoder().encode(content))
+        } catch {
+          // restoration failed; nothing more we can do here
+        }
+      }
+    }
+  }
+
+  // Clean up legacy status folders that are now empty
+  const legacyFolders = ['done', 'backlog', 'todo', 'in-progress', 'review']
+  for (const folder of legacyFolders) {
+    try {
+      const entries = await fs.readDirectory(vscode.Uri.file(path.join(featuresDir, folder)))
+      if (entries.length === 0) {
+        await fs.delete(vscode.Uri.file(path.join(featuresDir, folder)))
+      }
+    } catch {
+      // folder doesn't exist; skip
+    }
+  }
+
+  return { migrated, skipped, cancelled: false }
 }
