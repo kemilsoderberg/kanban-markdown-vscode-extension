@@ -5,6 +5,24 @@ All notable changes to the Kanban Markdown extension will be documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Feature directories — each feature is now a directory containing `spec.md` (the feature's spec and frontmatter) and an `issues/` directory of subtask files
+- Issue subtasks with three statuses (`todo`, `doing`, `done`), shown as a done-counter and expandable list on the feature card, and as a mini-board in the feature detail view
+- Hand-create or hand-edit issue files (`NNN-<slug>.md` with minimal frontmatter) in any editor — the board picks them up automatically
+- "Build with AI" at the issue level, prompting the agent with the issue file and the feature's spec for context
+- One-time auto-migration: existing flat feature files (and `done/` subfolder contents) are converted to the directory layout after a single confirmation dialog, preserving all frontmatter and content
+
+### Changed
+
+- Feature status transitions are frontmatter edits only — files no longer move between status folders, and all features live as sibling directories regardless of status
+
+### Removed
+
+- The `filenamePattern` setting and its migration prompt — new feature directories are named after a slug of the title
+
 ## [1.11.0] - 2026-03-01
 
 ### Added
